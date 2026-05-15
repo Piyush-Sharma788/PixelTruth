@@ -71,7 +71,7 @@ It analyzes visual artifacts introduced during image synthesis and classifies im
 
 > **⚠️ Prerequisites:**
 > - **Python Version:** This project strictly requires **Python 3.11**.
-(Newer versions like Python 3.12 are currently incompatible with the required TensorFlow dependencies).
+>   (Newer versions like Python 3.12 are currently incompatible with the required TensorFlow dependencies).
 
 > - **Windows Users:** 
 >   - You must have the [Microsoft Visual C++ Redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe) installed to run TensorFlow.
