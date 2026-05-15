@@ -11,6 +11,9 @@ from metrics import (
     get_roc_curve_plot,
     get_dataset_distribution_plot,
     get_class_statistics,
+    get_confusion_matrix_caption,
+    get_roc_curve_caption,
+    get_dataset_distribution_caption,
 )
 
 st.set_page_config(
@@ -221,103 +224,106 @@ with col_perf2:
 st.markdown("</div>", unsafe_allow_html=True)
 
 # ----------------------- MODEL ANALYTICS ------------------
+st.divider()
 st.markdown("<br>", unsafe_allow_html=True)
 st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
-st.subheader("📊 Model Analytics")
+st.markdown("### 📊 Model Analytics Dashboard")
+st.caption("Comprehensive performance metrics and visualizations of the deepfake detection model")
 
 # Fetch metrics
 metrics = get_sample_metrics()
 class_stats = get_class_statistics()
 
-# -------- METRIC CARDS ROW --------
+# -------- SECTION 1: PERFORMANCE METRICS --------
+st.markdown("#### 📈 Performance Metrics")
 col_acc, col_prec, col_rec, col_f1 = st.columns(4)
 
 with col_acc:
     st.metric(
         label="Accuracy",
         value=f"{metrics['accuracy']:.1f}%",
-        delta="",
-        help="Overall correctness of the model"
+        help="Overall correctness: (TP + TN) / Total"
     )
 
 with col_prec:
     st.metric(
         label="Precision",
         value=f"{metrics['precision']:.1f}%",
-        delta="",
-        help="Accuracy of positive predictions"
+        help="Positive accuracy: TP / (TP + FP)"
     )
 
 with col_rec:
     st.metric(
         label="Recall",
         value=f"{metrics['recall']:.1f}%",
-        delta="",
-        help="Coverage of actual positives"
+        help="True positive rate: TP / (TP + FN)"
     )
 
 with col_f1:
     st.metric(
         label="F1-Score",
         value=f"{metrics['f1_score']:.1f}%",
-        delta="",
         help="Harmonic mean of precision & recall"
     )
 
 st.markdown("<br>", unsafe_allow_html=True)
+st.divider()
 
-# -------- VISUALIZATIONS ROW --------
+# -------- SECTION 2: CONFUSION MATRIX & ROC CURVE --------
+st.markdown("#### 🎯 Classification Analysis")
 col_cm, col_roc = st.columns(2)
 
 with col_cm:
-    st.markdown("**Confusion Matrix**")
-    cm_fig = get_confusion_matrix_plot()
-    st.pyplot(cm_fig, use_container_width=True)
+    st.pyplot(get_confusion_matrix_plot(), use_container_width=True)
+    st.caption(get_confusion_matrix_caption())
 
 with col_roc:
-    st.markdown("**ROC Curve**")
-    roc_fig = get_roc_curve_plot()
-    st.pyplot(roc_fig, use_container_width=True)
+    st.pyplot(get_roc_curve_plot(), use_container_width=True)
+    st.caption(get_roc_curve_caption())
 
 st.markdown("<br>", unsafe_allow_html=True)
+st.divider()
 
-# -------- CLASS DISTRIBUTION & STATS --------
+# -------- SECTION 3: DATASET DISTRIBUTION & CLASS STATS --------
+st.markdown("#### 📊 Data & Class-Level Insights")
 col_dist, col_stats = st.columns(2)
 
 with col_dist:
-    st.markdown("**Class Distribution**")
-    dist_fig = get_dataset_distribution_plot()
-    st.pyplot(dist_fig, use_container_width=True)
+    st.pyplot(get_dataset_distribution_plot(), use_container_width=True)
+    st.caption(get_dataset_distribution_caption())
 
 with col_stats:
-    st.markdown("**Per-Class Statistics**")
+    st.markdown("**Per-Class Performance**")
+    st.caption("Accuracy breakdown by image category")
     
-    for class_label, stats in class_stats.items():
-        st.markdown(f"**{class_label}**")
+    for idx, (class_label, stats) in enumerate(class_stats.items()):
+        if idx > 0:
+            st.divider()
+        
+        # Class header with icon
+        icon = "🟢" if class_label == "Real" else "🔴"
+        st.markdown(f"#### {icon} {class_label} Images")
+        
+        # Metrics in 3 columns
         col_s1, col_s2, col_s3 = st.columns(3)
         
         with col_s1:
             st.metric(
-                label="Total",
-                value=f"{stats['total_samples']:,}",
-                help="Total samples in this class"
+                label="Total Samples",
+                value=f"{stats['total_samples']:,}"
             )
         
         with col_s2:
             st.metric(
-                label="Correct",
-                value=f"{stats['correctly_classified']:,}",
-                help="Correctly classified samples"
+                label="Correct Predictions",
+                value=f"{stats['correctly_classified']:,}"
             )
         
         with col_s3:
             st.metric(
                 label="Accuracy",
-                value=f"{stats['class_accuracy']:.1f}%",
-                help=f"Class-specific accuracy"
+                value=f"{stats['class_accuracy']:.1f}%"
             )
-        
-        st.markdown("---")
 
 st.markdown("</div>", unsafe_allow_html=True)
 
