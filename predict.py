@@ -3,8 +3,27 @@ import cv2
 import os
 from tensorflow.keras.models import load_model
 from tensorflow.keras.preprocessing.image import img_to_array
+from model_utils import ensure_model_file, get_model_path, get_model_url, get_model_sha256
 
-model = load_model('deepfake_detection_model.h5')
+MODEL_PATH = get_model_path()
+MODEL_URL = get_model_url()
+MODEL_SHA256 = get_model_sha256()
+_model = None
+
+
+def load_deepfake_model():
+    global _model
+    if _model is not None:
+        return _model
+
+    model_file_path = ensure_model_file(
+        model_path=MODEL_PATH,
+        model_url=MODEL_URL,
+        model_sha256=MODEL_SHA256,
+        download_if_missing=True,
+    )
+    _model = load_model(model_file_path)
+    return _model
 
 def preprocess_image(image_path):
     image = cv2.imread(image_path)
@@ -17,6 +36,7 @@ def preprocess_image(image_path):
     return image
 
 def predict_image(image_path):
+    model = load_deepfake_model()
     image = preprocess_image(image_path)
     prediction = model.predict(image, verbose=0)
     print(f"Raw prediction: {prediction}")
@@ -28,6 +48,10 @@ def predict_image(image_path):
     print(f"Confidence  : {confidence:.1f}%")
     return label
 
-# Fake image test
-image_path = "real_and_fake_face_detection/real_vs_fake/real-vs-fake/train/fake/001DDU0NI4.jpg"
-predict_image(image_path)
+if __name__ == "__main__":
+    import sys
+
+    if len(sys.argv) < 2:
+        raise SystemExit("Usage: python predict.py <image_path>")
+
+    predict_image(sys.argv[1])
