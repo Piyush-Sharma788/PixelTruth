@@ -215,6 +215,9 @@ with col_left:
                 file_bytes = np.asarray(bytearray(raw_bytes), dtype=np.uint8)
                 uploaded_file.seek(0)  # reset file pointer after read
                 image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+                # FIX: cv2.imdecode returns None for corrupted/invalid images without raising an exception
+                if image is None:
+                    st.error("⚠️ The uploaded file appears to be corrupted or is not a valid image. Please upload a valid JPG, PNG, or WebP file.")
             except Exception as e:
                 st.error(f"⚠️ Could not read the file: {e}. Please upload a valid JPG, PNG, or WebP image.")
                 image = None
@@ -244,13 +247,13 @@ with col_right:
         if label is not None:
 
             # ---------------- Grad-CAM ----------------
-            try: 
-                backbone_model = model.layers[0] 
-                last_conv_layer = find_last_conv_layer(backbone_model) 
-                heatmap = make_gradcam_heatmap( processed_image, backbone_model, last_conv_layer ) 
-                gradcam_image = overlay_heatmap(image, heatmap) 
-            except Exception as e: 
-                st.warning( f"Grad-CAM visualization could not be generated: {str(e)}" ) 
+            try:
+                backbone_model = model.layers[0]
+                last_conv_layer = find_last_conv_layer(backbone_model)
+                heatmap = make_gradcam_heatmap(processed_image, backbone_model, last_conv_layer)
+                gradcam_image = overlay_heatmap(image, heatmap)
+            except Exception as e:
+                st.warning(f"Grad-CAM visualization could not be generated: {str(e)}")
                 gradcam_image = None
 
             # ---------------- Result Styling ----------------
@@ -496,5 +499,4 @@ st.markdown(
 </div>
 ''',
     unsafe_allow_html=True,
-
 )
