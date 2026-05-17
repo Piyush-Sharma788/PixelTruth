@@ -29,6 +29,7 @@ def preprocess_image(image_path):
     image = cv2.imread(image_path)
     if image is None:
         raise FileNotFoundError(f"Image nahi mili: {image_path}")
+    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)  # fix: cv2.imread returns BGR; model expects RGB (trained via PIL/ImageDataGenerator)
     image = cv2.resize(image, (96, 96))
     image = img_to_array(image)
     image = np.expand_dims(image, axis=0)

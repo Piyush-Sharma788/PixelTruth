@@ -125,6 +125,7 @@ def render_missing_model_help():
 
 # ----------------------- IMAGE PIPELINE --------------------
 def preprocess_image(image):
+    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)  # fix: OpenCV loads BGR; model expects RGB (trained via PIL/ImageDataGenerator)
     image = cv2.resize(image, (96, 96))
     image = img_to_array(image)
     image = np.expand_dims(image, axis=0)

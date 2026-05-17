@@ -121,6 +121,37 @@ class TestPreprocessImage:
         with pytest.raises(Exception):
             preprocess_image(None)
 
+    def test_bgr_input_is_converted_to_rgb(self):
+        """
+        preprocess_image must convert BGR→RGB so the model receives channels
+        in the same order as the RGB training pipeline (ImageDataGenerator/PIL).
+
+        Strategy: build a synthetic BGR image where blue, green, and red pixel
+        values are all distinct.  After preprocess_image the tensor's channel 0
+        must equal the original red value (200/255) and channel 2 must equal
+        the original blue value (10/255).  If the BGR→RGB conversion is absent,
+        channel 0 would contain blue (10/255) instead — and the assertions fail.
+        """
+        # Construct a solid-colour BGR image: B=10, G=128, R=200
+        bgr_image = np.zeros((96, 96, 3), dtype=np.uint8)
+        bgr_image[:, :, 0] = 10   # blue  channel (OpenCV channel 0)
+        bgr_image[:, :, 1] = 128  # green channel
+        bgr_image[:, :, 2] = 200  # red   channel (OpenCV channel 2)
+
+        result = preprocess_image(bgr_image)  # expected shape: (1, 96, 96, 3)
+
+        expected_ch0 = 200 / 255.0  # after BGR→RGB, channel 0 = original red
+        expected_ch2 = 10 / 255.0   # after BGR→RGB, channel 2 = original blue
+
+        assert np.allclose(result[0, :, :, 0], expected_ch0, atol=1e-5), (
+            f"Channel 0 of output is {result[0, 0, 0, 0]:.4f}, expected {expected_ch0:.4f} "
+            "(original red). BGR→RGB conversion appears to be missing."
+        )
+        assert np.allclose(result[0, :, :, 2], expected_ch2, atol=1e-5), (
+            f"Channel 2 of output is {result[0, 0, 0, 2]:.4f}, expected {expected_ch2:.4f} "
+            "(original blue). BGR→RGB conversion appears to be missing."
+        )
+
 
 # ---------------------------------------------------------------------------
 # predict_image
