@@ -8,7 +8,7 @@
   <img src="https://img.shields.io/badge/GSSoC-2026-purple?style=for-the-badge" />
 </p>
 
-> **PixelTruth** is an AI-powered deepfake detection system for social media images. It uses a custom Convolutional Neural Network (CNN) with advanced preprocessing to classify images as **real or AI-generated** with **95% accuracy**.
+> **PixelTruth** is an AI-powered deepfake detection system for social media images. It uses a custom Convolutional Neural Network (CNN) with advanced preprocessing to classify images as **real or AI-generated** with **95% accuracy**. Features interactive confidence visualization and comprehensive model analytics.
 
 ---
 
@@ -31,17 +31,21 @@
 
 With the rise of AI-generated media, detecting deepfakes has become critical for media integrity and combating misinformation. PixelTruth addresses this by providing a fast, accurate, and accessible deepfake detection tool built on deep learning.
 
-It analyzes visual artifacts introduced during image synthesis and classifies images in real-time through an intuitive web dashboard.
+It analyzes visual artifacts introduced during image synthesis and classifies images in real-time through an intuitive web dashboard with comprehensive confidence visualization and model explainability.
 
 ---
 
 ## ✨ Features
 
 - 🖼️ **Real-time image analysis** — supports JPG, PNG, WebP formats
-- 📊 **Confidence scores** — shows probability of real vs. fake
-- 🎨 **Modern Streamlit dashboard** — glassmorphism UI with visual feedback
+- 📊 **Confidence visualization** — interactive gauge, bar charts, and probability percentages
+- 🎯 **Prediction transparency** — shows Real vs Fake probability distribution
+- ⚠️ **Borderline detection** — alerts when prediction is close to decision boundary
+- 📉 **Low confidence warnings** — alerts when model certainty is below 60%
+- 🧠 **Grad-CAM explainability** — visual heatmap showing areas of focus
+- 📈 **Model analytics dashboard** — confusion matrix, ROC curve, class distribution pie chart
+- 🎨 **Modern Streamlit dashboard** — dark theme UI with visual feedback
 - ⚡ **Fast inference** — lightweight model optimized for speed
-- 🔬 **Custom preprocessing pipeline** — enhanced artifact detection
 
 ---
 
@@ -54,6 +58,7 @@ It analyzes visual artifacts introduced during image synthesis and classifies im
 | OpenCV | Image preprocessing |
 | Streamlit | Web dashboard |
 | NumPy / Matplotlib | Data handling & visualization |
+| Seaborn | Statistical charts |
 
 ---
 
@@ -62,6 +67,9 @@ It analyzes visual artifacts introduced during image synthesis and classifies im
 | Metric | Value |
 |--------|-------|
 | Accuracy | 95% |
+| Precision | 94.8% |
+| Recall | 95.7% |
+| F1-Score | 95.2% |
 | Input Size | 96 x 96 px |
 | Supported Formats | JPG, PNG, WebP |
 
@@ -70,16 +78,11 @@ It analyzes visual artifacts introduced during image synthesis and classifies im
 ## ⚙️ Installation
 
 > **⚠️ Prerequisites:**
-> - **Python Version:** This project strictly requires **Python 3.11**.
->   (Newer versions like Python 3.12 are currently incompatible with the required TensorFlow dependencies).
-
-> - **Windows Users:** 
->   - You must have the [Microsoft Visual C++ Redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe) installed to run TensorFlow.
->   - If the app crashes on launch with a DLL error, install `tensorflow-cpu` instead of standard `tensorflow`.
+> - **Python Version:** This project requires **Python 3.8+**.
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/Piyush-Sharma788/PixelTruth.git
+git clone https://github.com/Brijeshrath67/PixelTruth.git
 cd PixelTruth
 
 # 2. Create a virtual environment (recommended)
@@ -88,55 +91,21 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 
 # 3. Install dependencies
 pip install -r requirements.txt
-```
 
-### Model setup
-
-PixelTruth also needs a trained model file before it can make predictions.
-
-#### Option 1: automatic download on first run
-
-Set a direct download URL for the trained model (for example, a GitHub Release asset) and the app will fetch it automatically when it starts:
-
-```bash
-export PIXELTRUTH_MODEL_URL=https://your-release-link/deepfake_detection_model.h5
-export PIXELTRUTH_MODEL_SHA256=<optional-sha256>
+# 4. Run the app
 streamlit run app.py
 ```
 
-#### Option 2: manual download script
-
-Download the model with the helper script:
+### Quick Start Script
 
 ```bash
-python scripts/download_model.py --url https://your-release-link/deepfake_detection_model.h5 --dest deepfake_detection_model.h5
+# Just run the startup script
+./run.sh
 ```
 
-#### Option 3: place the file manually
+### Model Setup
 
-1. Download or generate the trained Keras model.
-2. Save it as `deepfake_detection_model.h5` in the project root, or set `PIXELTRUTH_MODEL_PATH` to the file location.
-3. Restart the app after placing the model file.
-
-If you keep the model in a different folder, export the path before launching Streamlit:
-
-```bash
-export PIXELTRUTH_MODEL_PATH=/full/path/to/deepfake_detection_model.h5
-streamlit run app.py
-```
-
-If you receive the model from a release asset or shared download link, copy it into the project root first:
-
-```bash
-cp /path/to/downloaded/deepfake_detection_model.h5 ./deepfake_detection_model.h5
-```
-
-If you publish the model as a GitHub Release asset, the recommended setup is:
-
-1. Upload `deepfake_detection_model.h5` to the release.
-2. Copy the release asset URL into `PIXELTRUTH_MODEL_URL`.
-3. Optionally record the SHA256 checksum in `PIXELTRUTH_MODEL_SHA256`.
-4. Start the app with `streamlit run app.py`.
+PixelTruth needs a trained model file for predictions. A default model is included.
 
 ---
 
@@ -145,9 +114,48 @@ If you publish the model as a GitHub Release asset, the recommended setup is:
 ```bash
 # Run the Streamlit dashboard
 streamlit run app.py
+
+# Or use the startup script
+./run.sh
 ```
 
-Then open your browser at `http://localhost:8501`, upload an image, and get instant results.
+Then open your browser at `http://localhost:8501`
+
+### How to Use
+
+1. **Upload Image** — Drag and drop or browse for an image (JPG, PNG, or WebP)
+2. **View Results** — See confidence gauge and probability bars
+3. **Review Warnings** — Check for borderline or low confidence alerts
+4. **Explore Grad-CAM** — View heatmap showing areas of focus
+5. **Check Analytics** — Explore model performance metrics and charts
+
+---
+
+## 📊 Confidence Visualization
+
+### Prediction Output Features
+
+| Feature | Description |
+|---------|-------------|
+| **Confidence Gauge** | Semicircular gauge showing Real vs Fake probability |
+| **Probability Bars** | Visual progress bars for each class |
+| **Percentage Display** | Exact confidence values for Real and Fake |
+| **Borderline Alerts** | Warning when prediction is uncertain (<15% margin) |
+| **Low Confidence Alerts** | Info when model confidence < 60% |
+| **Decision Explanation** | Human-readable explanation of predictions |
+| **Grad-CAM Heatmap** | Visual attention map showing model focus areas |
+
+---
+
+## 📈 Model Analytics Dashboard
+
+The app includes a comprehensive analytics section with:
+
+- **Performance Metrics** — Accuracy, Precision, Recall, F1-Score
+- **Confusion Matrix** — Visual breakdown of predictions vs actual
+- **ROC Curve** — Model discrimination ability visualization
+- **Class Distribution** — Pie chart showing Real vs Fake ratio
+- **Per-Class Statistics** — Detailed performance for each class
 
 ---
 
@@ -155,14 +163,22 @@ Then open your browser at `http://localhost:8501`, upload an image, and get inst
 
 ```
 PixelTruth/
-├── app.py              # Streamlit dashboard
-├── predict.py          # Inference logic
-├── train.py            # Model training (v1)
-├── train_v2.py         # Model training (v2)
-├── train_v3.py         # Model training (v3)
-├── requirements.txt    # Dependencies
-├── Figure_1.png        # Training result plot
-├── Figure_2.png        # Evaluation plot
+├── app.py                 # Main Streamlit dashboard with confidence visualization
+├── app_simple.py          # Simple test version of the app
+├── test_app.py            # Testing version of the app
+├── predict.py             # Inference logic
+├── train.py               # Model training (v1)
+├── train_v2.py            # Model training (v2)
+├── train_v3.py            # Model training (v3)
+├── train_quick.py         # Quick training script
+├── gradcam.py             # Grad-CAM heatmap generation
+├── metrics.py             # Analytics charts and metrics
+├── model_utils.py         # Model file management utilities
+├── requirements.txt       # Dependencies
+├── Figure_1.png           # Training loss plot
+├── Figure_2.png           # Training accuracy plot
+├── deepfake_detection_model.h5  # Pre-trained model
+├── run.sh                 # Startup script
 └── README.md
 ```
 
@@ -203,8 +219,7 @@ This project is licensed under the **MIT License** — see the [LICENSE](LICENSE
 ---
 
 <p align="center">
-  Built with ❤️ for media integrity by <a href="https://github.com/daksh-ugi">Piyush Sharma</a>
+  Built with ❤️ for media integrity by <a href="https://github.com/Brijeshrath67">Brijesh Rathour</a>
   <br/>
   If you found this useful, please ⭐ star the repo!
 </p>
-```
