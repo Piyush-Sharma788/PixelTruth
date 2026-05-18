@@ -71,9 +71,17 @@ It analyzes visual artifacts introduced during image synthesis and classifies im
 
 ## ⚙️ Installation
 
+> **⚠️ Prerequisites:**
+> - **Python Version:** This project strictly requires **Python 3.11**.
+>   (Newer versions like Python 3.12 are currently incompatible with the required TensorFlow dependencies).
+
+> - **Windows Users:** 
+>   - You must have the [Microsoft Visual C++ Redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe) installed to run TensorFlow.
+>   - If the app crashes on launch with a DLL error, install `tensorflow-cpu` instead of standard `tensorflow`.
+
 ```bash
 # 1. Clone the repository
-git clone https://github.com/daksh-ugi/PixelTruth.git
+git clone https://github.com/Piyush-Sharma788/PixelTruth.git
 cd PixelTruth
 
 # 2. Create a virtual environment (recommended)
@@ -84,7 +92,53 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-> **Note:** The deepfake detection model (`prithivMLmods/deepfake-detector-model-v1`) downloads automatically from Hugging Face on first run. No manual model file placement is needed.  <!-- CHANGED: added auto-download note; removed manual .h5 placement step -->
+### Model setup
+
+PixelTruth also needs a trained model file before it can make predictions.
+
+#### Option 1: automatic download on first run
+
+Set a direct download URL for the trained model (for example, a GitHub Release asset) and the app will fetch it automatically when it starts:
+
+```bash
+export PIXELTRUTH_MODEL_URL=https://your-release-link/deepfake_detection_model.h5
+export PIXELTRUTH_MODEL_SHA256=<optional-sha256>
+streamlit run app.py
+```
+
+#### Option 2: manual download script
+
+Download the model with the helper script:
+
+```bash
+python scripts/download_model.py --url https://your-release-link/deepfake_detection_model.h5 --dest deepfake_detection_model.h5
+```
+
+#### Option 3: place the file manually
+
+1. Download or generate the trained Keras model.
+2. Save it as `deepfake_detection_model.h5` in the project root, or set `PIXELTRUTH_MODEL_PATH` to the file location.
+3. Restart the app after placing the model file.
+
+If you keep the model in a different folder, export the path before launching Streamlit:
+
+```bash
+export PIXELTRUTH_MODEL_PATH=/full/path/to/deepfake_detection_model.h5
+streamlit run app.py
+```
+
+If you receive the model from a release asset or shared download link, copy it into the project root first:
+
+```bash
+cp /path/to/downloaded/deepfake_detection_model.h5 ./deepfake_detection_model.h5
+```
+
+If you publish the model as a GitHub Release asset, the recommended setup is:
+
+1. Upload `deepfake_detection_model.h5` to the release.
+2. Copy the release asset URL into `PIXELTRUTH_MODEL_URL`.
+3. Optionally record the SHA256 checksum in `PIXELTRUTH_MODEL_SHA256`.
+4. Start the app with `streamlit run app.py`.
 
 ---
 

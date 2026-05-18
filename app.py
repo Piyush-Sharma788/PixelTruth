@@ -6,6 +6,20 @@ import streamlit.components.v1 as components
 from PIL import Image  # CHANGED: added PIL — required for cv2→PIL conversion before HF pipeline
 from predict import predict_image  # CHANGED: import HF-backed predict_image from predict.py
 
+from gradcam import make_gradcam_heatmap, overlay_heatmap
+
+from metrics import (
+    get_sample_metrics,
+    get_confusion_matrix_plot,
+    get_roc_curve_plot,
+    get_dataset_distribution_plot,
+    get_class_statistics,
+    get_confusion_matrix_caption,
+    get_roc_curve_caption,
+    get_dataset_distribution_caption,
+)
+from model_utils import ensure_model_file, get_model_path, get_model_url, get_model_sha256
+
 st.set_page_config(
     page_title="PixelTruth",
     page_icon="🔍",
@@ -125,16 +139,35 @@ with col_left:
     )
     st.markdown("</div>", unsafe_allow_html=True)
 
+    MAX_FILE_SIZE_MB = 10
+    MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
+
     if uploaded_file is not None:
-        file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
-        image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+        if uploaded_file.size > MAX_FILE_SIZE_BYTES:
+            st.error(
+                f"⚠️ File too large: **{uploaded_file.size / (1024 * 1024):.1f} MB**. "
+                f"Please upload an image under {MAX_FILE_SIZE_MB} MB. "
+                "Large RAW or TIFF files can crash the app — try a compressed JPG or PNG instead."
+            )
+            image = None
+        else:
+            try:
+                raw_bytes = uploaded_file.read()
+                file_bytes = np.asarray(bytearray(raw_bytes), dtype=np.uint8)
+                uploaded_file.seek(0)  # reset file pointer after read
+                image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+                # FIX: cv2.imdecode returns None for corrupted/invalid images without raising an exception
+                if image is None:
+                    st.error("⚠️ The uploaded file appears to be corrupted or is not a valid image. Please upload a valid JPG, PNG, or WebP file.")
+            except Exception as e:
+                st.error(f"⚠️ Could not read the file: {e}. Please upload a valid JPG, PNG, or WebP image.")
+                image = None
+
         if image is not None:
             st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
             st.subheader("🔍 Preview")
-            st.image(image, channels="BGR", caption="Uploaded Image", use_column_width=True)
+            st.image(image, channels="BGR", caption="Uploaded Image", use_container_width=True)
             st.markdown("</div>", unsafe_allow_html=True)
-        else:
-            st.error("Could not read the uploaded image. Please try another file.")
 
 with col_right:
     st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
@@ -147,62 +180,259 @@ with col_right:
             label, confidence = _run_prediction(image)  # CHANGED: call _run_prediction (cv2→PIL→HF) instead of old predict_image
 
         if label is not None:
-            style_class = "result-real" if label == "Real" else "result-fake"
-            icon = "🟢" if label == "Real" else "🔴"
-            headline = "Authentic image" if label == "Real" else "Deepfake suspected"
 
-            st.markdown(f"<div class='{style_class}' style='padding-left:0.8rem;'>", unsafe_allow_html=True)
+            # ---------------- Grad-CAM ----------------
+            try:
+                backbone_model = model.layers[0]
+                last_conv_layer = find_last_conv_layer(backbone_model)
+                heatmap = make_gradcam_heatmap(processed_image, backbone_model, last_conv_layer)
+                gradcam_image = overlay_heatmap(image, heatmap)
+            except Exception as e:
+                st.warning(f"Grad-CAM visualization could not be generated: {str(e)}")
+                gradcam_image = None
+
+            # ---------------- Result Styling ----------------
+            style_class = (
+                "result-real"
+                if label == "Real"
+                else "result-fake"
+            )
+
+            icon = "🟢" if label == "Real" else "🔴"
+
+            headline = (
+                "Authentic image"
+                if label == "Real"
+                else "Deepfake suspected"
+            )
+
+            # ---------------- Prediction Card ----------------
+            st.markdown(
+                f"<div class='{style_class}' style='padding-left:0.8rem;'>",
+                unsafe_allow_html=True
+            )
+
             st.markdown(f"### {icon} {headline}")
+
             st.markdown(f"**Model prediction:** {label}")
+
             st.progress(confidence)
+
             st.caption(f"Confidence: {confidence * 100:.1f}%")
+
             st.markdown("</div>", unsafe_allow_html=True)
 
+            # ---------------- Explanation Message ----------------
             if label == "Fake":
+
                 st.error(
-                    "The model detected patterns consistent with deepfake artifacts, "
-                    "such as irregular blending, lighting mismatches, or unusual facial textures."
+                    "The model detected patterns consistent with "
+                    "deepfake artifacts, such as irregular blending, "
+                    "lighting mismatches, or unusual facial textures."
                 )
+
             else:
+
                 st.success(
                     "The model did not detect strong deepfake indicators. "
-                    "The image appears consistent with natural, unaltered content."
+                    "The image appears consistent with natural, "
+                    "unaltered content."
                 )
+
+            # ---------------- Grad-CAM Visualization ----------------
+            st.markdown("<br>", unsafe_allow_html=True)
+
+            st.subheader("🧠 Model Explainability (Grad-CAM)")
+
+            col_gc1, col_gc2 = st.columns(2)
+
+            with col_gc1:
+
+                st.image(
+                    image,
+                    channels="BGR",
+                    caption="Original Image",
+                    use_column_width=True
+                )
+
+            with col_gc2:
+
+                if gradcam_image is not None:
+
+                    st.image(
+                        gradcam_image,
+                        channels="BGR",
+                        caption="Grad-CAM Heatmap",
+                        use_column_width=True
+                    )
+
+                else:
+
+                    st.info(
+                        "Grad-CAM visualization unavailable for this model."
+                    )
+
+            st.caption(
+                "Highlighted regions represent areas the model focused on "
+                "during prediction."
+            )
 
     st.markdown("</div>", unsafe_allow_html=True)
 
+
 # ----------------------- MODEL PERFORMANCE -----------------
+
 st.markdown("<br>", unsafe_allow_html=True)
+
 st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
+
 st.subheader("📉 Training Performance")
 
 col_perf1, col_perf2 = st.columns(2)
 
 with col_perf1:
+
     st.markdown("**Training Accuracy Curve**")
+
     if os.path.exists("Figure_2.png"):
+
         st.image("Figure_2.png", use_column_width=True)
+
+        st.image("Figure_2.png", use_container_width=True)
     else:
+
         st.info("Figure_2.png not found.")
 
+
 with col_perf2:
+
     st.markdown("**Training Loss Curve**")
+
     if os.path.exists("Figure_1.png"):
+
         st.image("Figure_1.png", use_column_width=True)
+
+        st.image("Figure_1.png", use_container_width=True)
+
     else:
+
         st.info("Figure_1.png not found.")
 
 st.markdown("</div>", unsafe_allow_html=True)
 
+# ----------------------- MODEL ANALYTICS ------------------
+st.divider()
+st.markdown("<br>", unsafe_allow_html=True)
+st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
+st.markdown("### 📊 Model Analytics Dashboard")
+st.caption("Comprehensive performance metrics and visualizations of the deepfake detection model")
+
+# Fetch metrics
+metrics = get_sample_metrics()
+class_stats = get_class_statistics()
+
+# -------- SECTION 1: PERFORMANCE METRICS --------
+st.markdown("#### 📈 Performance Metrics")
+col_acc, col_prec, col_rec, col_f1 = st.columns(4)
+
+with col_acc:
+    st.metric(
+        label="Accuracy",
+        value=f"{metrics['accuracy']:.1f}%",
+        help="Overall correctness: (TP + TN) / Total"
+    )
+
+with col_prec:
+    st.metric(
+        label="Precision",
+        value=f"{metrics['precision']:.1f}%",
+        help="Positive accuracy: TP / (TP + FP)"
+    )
+
+with col_rec:
+    st.metric(
+        label="Recall",
+        value=f"{metrics['recall']:.1f}%",
+        help="True positive rate: TP / (TP + FN)"
+    )
+
+with col_f1:
+    st.metric(
+        label="F1-Score",
+        value=f"{metrics['f1_score']:.1f}%",
+        help="Harmonic mean of precision & recall"
+    )
+
+st.markdown("<br>", unsafe_allow_html=True)
+st.divider()
+
+# -------- SECTION 2: CONFUSION MATRIX & ROC CURVE --------
+st.markdown("#### 🎯 Classification Analysis")
+col_cm, col_roc = st.columns(2)
+
+with col_cm:
+    st.pyplot(get_confusion_matrix_plot(), use_container_width=True)
+    st.caption(get_confusion_matrix_caption())
+
+with col_roc:
+    st.pyplot(get_roc_curve_plot(), use_container_width=True)
+    st.caption(get_roc_curve_caption())
+
+st.markdown("<br>", unsafe_allow_html=True)
+st.divider()
+
+# -------- SECTION 3: DATASET DISTRIBUTION & CLASS STATS --------
+st.markdown("#### 📊 Data & Class-Level Insights")
+col_dist, col_stats = st.columns(2)
+
+with col_dist:
+    st.pyplot(get_dataset_distribution_plot(), use_container_width=True)
+    st.caption(get_dataset_distribution_caption())
+
+with col_stats:
+    st.markdown("**Per-Class Performance**")
+    st.caption("Accuracy breakdown by image category")
+    
+    for idx, (class_label, stats) in enumerate(class_stats.items()):
+        if idx > 0:
+            st.divider()
+        
+        # Class header with icon
+        icon = "🟢" if class_label == "Real" else "🔴"
+        st.markdown(f"#### {icon} {class_label} Images")
+        
+        # Metrics in 3 columns
+        col_s1, col_s2, col_s3 = st.columns(3)
+        
+        with col_s1:
+            st.metric(
+                label="Total Samples",
+                value=f"{stats['total_samples']:,}"
+            )
+        
+        with col_s2:
+            st.metric(
+                label="Correct Predictions",
+                value=f"{stats['correctly_classified']:,}"
+            )
+        
+        with col_s3:
+            st.metric(
+                label="Accuracy",
+                value=f"{stats['class_accuracy']:.1f}%"
+            )
+
+st.markdown("</div>", unsafe_allow_html=True)
+
 # ----------------------- FOOTER ----------------------------
+
 st.markdown(
-    """
+    '''
 <div style="text-align:center; margin-top:3rem; color:#6b7280; font-size:0.8rem;">
   <hr style="border-color:rgba(75,85,99,0.6);" />
   <p>🕵️ PixelTruth • Built with Streamlit &amp; Hugging Face Transformers</p>  <!-- CHANGED: updated footer — TensorFlow replaced by Hugging Face Transformers -->
  
 </div>
-""",
+''',
     unsafe_allow_html=True,
 )
-
