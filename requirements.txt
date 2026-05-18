@@ -1,6 +1,8 @@
 streamlit==1.35.0
-tensorflow==2.15.0
-keras==2.15.0
+# CHANGED: removed tensorflow==2.15.0 and keras==2.15.0 — no longer needed after HF migration
+# CHANGED: added transformers and torch as the HF inference backend
+transformers>=4.40.0
+torch>=2.2.0
 numpy==1.26.4
 pandas==2.2.2
 pillow==10.3.0

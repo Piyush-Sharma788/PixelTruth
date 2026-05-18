@@ -3,8 +3,8 @@ import cv2
 import numpy as np
 import streamlit as st
 import streamlit.components.v1 as components
-from tensorflow.keras.models import load_model
-from tensorflow.keras.preprocessing.image import img_to_array
+from PIL import Image  # CHANGED: added PIL — required for cv2→PIL conversion before HF pipeline
+from predict import predict_image  # CHANGED: import HF-backed predict_image from predict.py
 
 st.set_page_config(
     page_title="PixelTruth",
@@ -62,39 +62,21 @@ footer {visibility: hidden;}
 """
 st.markdown(custom_css, unsafe_allow_html=True)
 
-# ----------------------- LOAD MODEL ------------------------
+# CHANGED: replaced H5 loader + TF preprocessing pipeline with HF pipeline backed by predict.py
+# CHANGED: removed load_deepfake_model(), get_model_input_size(), preprocess_image(), and old predict_image()
+
 @st.cache_resource
-def load_deepfake_model():
-    try:
-        if os.path.exists("deepfake_detection_model.h5"):
-            return load_model("deepfake_detection_model.h5")
-        else:
-            st.error("Model file 'deepfake_detection_model.h5' not found in the current directory.")
-            return None
-    except Exception as e:
-        st.error(f"Error loading model: {str(e)}")
-        return None
+def _load_hf_pipeline():
+    # CHANGED: warm up the HF pipeline once at startup so the first upload isn't slow
+    from predict import _pipe
+    return _pipe
 
-model = load_deepfake_model()
+_load_hf_pipeline()  # CHANGED: triggers model auto-download/cache on app start
 
-# ----------------------- IMAGE PIPELINE --------------------
-def preprocess_image(image):
-    image = cv2.resize(image, (96, 96))
-    image = img_to_array(image)
-    image = np.expand_dims(image, axis=0)
-    image = image / 255.0
-    return image
-
-def predict_image(image):
-    if model is None:
-        return None, None
-    processed_image = preprocess_image(image)
-    prediction = model.predict(processed_image, verbose=0)
-    class_label = np.argmax(prediction, axis=1)[0]
-    confidence = float(np.max(prediction))
-    label = "Real" if class_label == 0 else "Fake"
-    return label, confidence
-
+def _run_prediction(bgr_image):
+    # CHANGED: convert cv2 BGR ndarray to PIL RGB expected by the HF pipeline
+    pil_image = Image.fromarray(cv2.cvtColor(bgr_image, cv2.COLOR_BGR2RGB))
+    return predict_image(pil_image)
 # ----------------------- HEADER / HERO ---------------------
 st.markdown("<h1 class='main-title'>DEEPFAKE SENTINEL</h1>", unsafe_allow_html=True)
 st.markdown(
@@ -125,6 +107,7 @@ with col_info_right:
     st.subheader("📈 Model Snapshot")
     st.metric("Training Accuracy", "95%")
     st.metric("Input Size", "96 × 96 pixels")
+    st.metric("Model Input", "224 × 224 pixels")  # CHANGED: HF model uses 224x224; removed get_model_input_size() call
     st.metric("Task", "Binary classification (Real / Fake)")
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -159,11 +142,9 @@ with col_right:
 
     if uploaded_file is None:
         st.write("Upload an image on the left to run deepfake detection.")
-    elif model is None:
-        st.error("Model could not be loaded. Detection is unavailable.")
     else:
         with st.spinner("Analyzing image with the deepfake model..."):
-            label, confidence = predict_image(image)
+            label, confidence = _run_prediction(image)  # CHANGED: call _run_prediction (cv2→PIL→HF) instead of old predict_image
 
         if label is not None:
             style_class = "result-real" if label == "Real" else "result-fake"
@@ -218,7 +199,7 @@ st.markdown(
     """
 <div style="text-align:center; margin-top:3rem; color:#6b7280; font-size:0.8rem;">
   <hr style="border-color:rgba(75,85,99,0.6);" />
-  <p>🕵️ PixelTruth • Built with Streamlit & TensorFlow</p>
+  <p>🕵️ PixelTruth • Built with Streamlit &amp; Hugging Face Transformers</p>  <!-- CHANGED: updated footer — TensorFlow replaced by Hugging Face Transformers -->
  
 </div>
 """,

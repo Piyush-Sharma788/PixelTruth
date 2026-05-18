@@ -2,7 +2,8 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.8+-blue?style=for-the-badge&logo=python" />
-  <img src="https://img.shields.io/badge/TensorFlow-2.x-orange?style=for-the-badge&logo=tensorflow" />
+  <!-- CHANGED: replaced TensorFlow badge with Hugging Face Transformers badge -->
+  <img src="https://img.shields.io/badge/Hugging%20Face-Transformers-yellow?style=for-the-badge&logo=huggingface" />
   <img src="https://img.shields.io/badge/Streamlit-Dashboard-red?style=for-the-badge&logo=streamlit" />
   <img src="https://img.shields.io/badge/Accuracy-95%25-brightgreen?style=for-the-badge" />
   <img src="https://img.shields.io/badge/GSSoC-2026-purple?style=for-the-badge" />
@@ -50,7 +51,8 @@ It analyzes visual artifacts introduced during image synthesis and classifies im
 | Tool | Purpose |
 |------|---------|
 | Python | Core language |
-| TensorFlow / Keras | CNN model training & inference |
+| Hugging Face Transformers | Deepfake detection model & inference |  <!-- CHANGED: replaced TensorFlow/Keras with Hugging Face Transformers -->
+| PyTorch | Inference backend for HF pipeline |  <!-- CHANGED: added PyTorch as the HF backend -->
 | OpenCV | Image preprocessing |
 | Streamlit | Web dashboard |
 | NumPy / Matplotlib | Data handling & visualization |
@@ -81,6 +83,8 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 # 3. Install dependencies
 pip install -r requirements.txt
 ```
+
+> **Note:** The deepfake detection model (`prithivMLmods/deepfake-detector-model-v1`) downloads automatically from Hugging Face on first run. No manual model file placement is needed.  <!-- CHANGED: added auto-download note; removed manual .h5 placement step -->
 
 ---
 

@@ -1,33 +1,18 @@
-import numpy as np
-import cv2
-import os
-from tensorflow.keras.models import load_model
-from tensorflow.keras.preprocessing.image import img_to_array
+# CHANGED: removed numpy, cv2, tensorflow.keras imports — no longer needed with HF pipeline
+from PIL import Image
+from transformers import pipeline
 
-model = load_model('deepfake_detection_model.h5')
+# CHANGED: replaced load_model('deepfake_detection_model.h5') with HF pipeline that auto-downloads on first run
+_pipe = pipeline("image-classification", model="prithivMLmods/deepfake-detector-model-v1")
 
-def preprocess_image(image_path):
-    image = cv2.imread(image_path)
-    if image is None:
-        raise FileNotFoundError(f"Image nahi mili: {image_path}")
-    image = cv2.resize(image, (96, 96))
-    image = img_to_array(image)
-    image = np.expand_dims(image, axis=0)
-    image = image / 255.0
-    return image
+# CHANGED: signature changed from image_path (str) to image (PIL.Image) to match app.py's upload flow
+def predict_image(image: Image.Image) -> tuple[str, float]:
+    # CHANGED: HF pipeline handles resizing/preprocessing internally; no manual cv2 resize needed
+    results = _pipe(image)
+    top = results[0]
+    raw_label: str = top["label"]
+    confidence: float = float(top["score"])
 
-def predict_image(image_path):
-    image = preprocess_image(image_path)
-    prediction = model.predict(image, verbose=0)
-    print(f"Raw prediction: {prediction}")
-    class_label = np.argmax(prediction, axis=1)[0]
-    confidence = float(np.max(prediction)) * 100
-    # Class 1 = Fake, Class 0 = Real (dataset mapping)
-    label = "Fake" if class_label == 1 else "Real"
-    print(f"Prediction  : {label}")
-    print(f"Confidence  : {confidence:.1f}%")
-    return label
-
-# Fake image test
-image_path = "real_and_fake_face_detection/real_vs_fake/real-vs-fake/train/fake/001DDU0NI4.jpg"
-predict_image(image_path)
+    # CHANGED: normalise label to "Real"/"Fake" regardless of the model's internal label strings
+    label = "Real" if "real" in raw_label.lower() else "Fake"
+    return label, confidence
