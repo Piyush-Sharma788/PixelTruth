@@ -209,6 +209,109 @@ def get_dataset_distribution_caption():
 
 
 
+# ==================== CONFIDENCE VISUALIZATION ====================
+def plot_confidence_bars(real_prob, fake_prob):
+    """
+    Creates a horizontal bar chart showing confidence percentages for Real vs Fake.
+    
+    Args:
+        real_prob: Probability that the image is real (0 to 1)
+        fake_prob: Probability that the image is fake (0 to 1)
+    
+    Returns:
+        matplotlib figure object
+    """
+    fig, ax = plt.subplots(figsize=(7, 2.5))
+    apply_dark_theme(fig, ax)
+    
+    categories = ['Real', 'Fake']
+    probabilities = [real_prob * 100, fake_prob * 100]
+    colors = ['#22c55e', '#ef4444']
+    
+    bars = ax.barh(categories, probabilities, color=colors, height=0.5, edgecolor='white', linewidth=1.5)
+    
+    for i, (bar, prob) in enumerate(zip(bars, probabilities)):
+        ax.text(
+            prob + 1,
+            bar.get_y() + bar.get_height() / 2,
+            f'{prob:.1f}%',
+            va='center',
+            ha='left',
+            color=TEXT_COLOR,
+            fontsize=12,
+            fontweight='bold'
+        )
+    
+    ax.set_xlim(0, 105)
+    ax.set_xlabel('Confidence (%)', color=TEXT_COLOR, fontsize=11)
+    ax.set_title('Prediction Confidence Distribution', color=TEXT_COLOR, fontsize=13, fontweight='bold', pad=10)
+    ax.grid(True, axis='x', alpha=0.2, color=BORDER_COLOR)
+    
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    ax.spines['bottom'].set_visible(True)
+    ax.spines['bottom'].set_color(BORDER_COLOR)
+    
+    plt.tight_layout()
+    return fig
+
+
+def plot_live_confidence_gauge(real_prob, fake_prob):
+    """
+    Creates a semicircular gauge chart showing confidence percentages.
+    
+    Args:
+        real_prob: Probability that the image is real (0 to 1)
+        fake_prob: Probability that the image is fake (0 to 1)
+    
+    Returns:
+        matplotlib figure object
+    """
+    from matplotlib.patches import Wedge, FancyBboxPatch
+    import matplotlib.patches as mpatches
+    
+    fig, ax = plt.subplots(figsize=(7, 4.5))
+    fig.patch.set_facecolor(DARK_BG)
+    ax.set_facecolor(DARK_BG)
+    
+    angle_range = 180
+    max_val = 100
+    
+    real_pct = real_prob * 100
+    fake_pct = fake_prob * 100
+    
+    green_angle = (real_pct / max_val) * angle_range
+    red_angle = (fake_pct / max_val) * angle_range
+    
+    green_wedge = Wedge((0.5, 0), 0.4, 180, 180 - green_angle, facecolor='#22c55e', edgecolor=DARK_CARD, linewidth=2, alpha=0.9)
+    ax.add_patch(green_wedge)
+    
+    remaining = angle_range - green_angle
+    gray_wedge = Wedge((0.5, 0), 0.4, 180 - green_angle, 180, facecolor='#475569', edgecolor=DARK_CARD, linewidth=2, alpha=0.5)
+    ax.add_patch(gray_wedge)
+    
+    ax.text(0.5, 0.65, f'{real_pct:.1f}%', ha='center', va='center', fontsize=28, fontweight='bold', color='#22c55e')
+    ax.text(0.5, 0.52, 'Real', ha='center', va='center', fontsize=14, color=TEXT_COLOR)
+    
+    ax.text(0.15, 0.15, f'Fake: {fake_pct:.1f}%', ha='center', va='center', fontsize=11, color='#ef4444', fontweight='bold')
+    ax.text(0.85, 0.15, f'Confidence', ha='center', va='center', fontsize=11, color=TEXT_COLOR)
+    
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.axis('off')
+    ax.set_title('Confidence Gauge', color=TEXT_COLOR, fontsize=14, fontweight='bold', pad=10)
+    
+    legend_elements = [
+        mpatches.Patch(color='#22c55e', label=f'Real ({real_pct:.1f}%)'),
+        mpatches.Patch(color='#475569', label=f'Fake ({fake_pct:.1f}%)')
+    ]
+    ax.legend(handles=legend_elements, loc='lower center', ncol=2, bbox_to_anchor=(0.5, -0.05),
+              facecolor=DARK_CARD, edgecolor=BORDER_COLOR, labelcolor=TEXT_COLOR)
+    
+    plt.tight_layout()
+    return fig
+
+
 # ==================== CLASS STATISTICS ====================
 def get_class_statistics():
     """
