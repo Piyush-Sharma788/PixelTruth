@@ -7,6 +7,10 @@ from PIL import Image  # CHANGED: added PIL — required for cv2→PIL conversio
 from predict import predict_image  # CHANGED: import HF-backed predict_image from predict.py
 
 from gradcam import make_gradcam_heatmap, overlay_heatmap
+from exceptions import PreprocessingError, ModelExecutionError
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(name)s: %(message)s')
+logger = logging.getLogger(__name__)
 
 from metrics import (
     get_sample_metrics,
@@ -62,6 +66,9 @@ custom_css = """
 }
 .result-fake {
     border-left: 5px solid #ef4444;
+}
+.result-uncertain {
+    border-left: 5px solid #f59e0b;
 }
 .upload-box > div {
     border-radius: 18px !important;
@@ -188,23 +195,26 @@ with col_right:
                 heatmap = make_gradcam_heatmap(processed_image, backbone_model, last_conv_layer)
                 gradcam_image = overlay_heatmap(image, heatmap)
             except Exception as e:
+                logger.warning(f"Grad-CAM visualization failed: {e}", exc_info=True)
                 st.warning(f"Grad-CAM visualization could not be generated: {str(e)}")
                 gradcam_image = None
 
             # ---------------- Result Styling ----------------
-            style_class = (
-                "result-real"
-                if label == "Real"
-                else "result-fake"
-            )
+            # Three display states: Uncertain (low confidence), Real, or Fake.
+            is_uncertain = confidence < LOW_CONFIDENCE_THRESHOLD
 
-            icon = "🟢" if label == "Real" else "🔴"
-
-            headline = (
-                "Authentic image"
-                if label == "Real"
-                else "Deepfake suspected"
-            )
+            if is_uncertain:
+                style_class = "result-uncertain"
+                icon = "🟡"
+                headline = "Low Confidence — Uncertain"
+            elif label == "Real":
+                style_class = "result-real"
+                icon = "🟢"
+                headline = "Authentic image"
+            else:
+                style_class = "result-fake"
+                icon = "🔴"
+                headline = "Deepfake suspected"
 
             # ---------------- Prediction Card ----------------
             st.markdown(
@@ -223,7 +233,16 @@ with col_right:
             st.markdown("</div>", unsafe_allow_html=True)
 
             # ---------------- Explanation Message ----------------
-            if label == "Fake":
+            if is_uncertain:
+
+                st.warning(
+                    f"The model's confidence is only {confidence * 100:.1f}% — "
+                    "this prediction is borderline and should not be treated as "
+                    "a definitive verdict. Consider using a higher-quality or "
+                    "less ambiguous image for a more reliable result."
+                )
+
+            elif label == "Fake":
 
                 st.error(
                     "The model detected patterns consistent with "
