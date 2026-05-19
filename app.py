@@ -3,8 +3,8 @@ import cv2
 import numpy as np
 import streamlit as st
 import streamlit.components.v1 as components
+from preprocessing import decode_image_bytes, preprocess_image_array, preprocess_image_bytes
 from tensorflow.keras.models import load_model
-from tensorflow.keras.preprocessing.image import img_to_array
 
 from gradcam import make_gradcam_heatmap, overlay_heatmap
 
@@ -128,12 +128,15 @@ def render_missing_model_help():
 
 # ----------------------- IMAGE PIPELINE --------------------
 def preprocess_image(image):
-    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)  # fix: OpenCV loads BGR; model expects RGB (trained via PIL/ImageDataGenerator)
-    image = cv2.resize(image, (96, 96))
-    image = img_to_array(image)
-    image = np.expand_dims(image, axis=0)
-    image = image / 255.0
-    return image
+    return preprocess_image_array(image)
+
+
+def preprocess_uploaded_image(image_bytes):
+    return preprocess_image_bytes(image_bytes)
+
+
+preprocess_uploaded_image.cache_clear = preprocess_image_bytes.cache_clear
+preprocess_uploaded_image.cache_info = preprocess_image_bytes.cache_info
 
 def predict_image(image):
     if model is None:
@@ -200,6 +203,7 @@ with col_left:
 
     MAX_FILE_SIZE_MB = 10
     MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
+    uploaded_image_bytes = None
 
     if uploaded_file is not None:
         if uploaded_file.size > MAX_FILE_SIZE_BYTES:
@@ -212,12 +216,9 @@ with col_left:
         else:
             try:
                 raw_bytes = uploaded_file.read()
-                file_bytes = np.asarray(bytearray(raw_bytes), dtype=np.uint8)
+                uploaded_image_bytes = raw_bytes
                 uploaded_file.seek(0)  # reset file pointer after read
-                image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-                # FIX: cv2.imdecode returns None for corrupted/invalid images without raising an exception
-                if image is None:
-                    st.error("⚠️ The uploaded file appears to be corrupted or is not a valid image. Please upload a valid JPG, PNG, or WebP file.")
+                image = decode_image_bytes(raw_bytes)
             except Exception as e:
                 st.error(f"⚠️ Could not read the file: {e}. Please upload a valid JPG, PNG, or WebP image.")
                 image = None
@@ -239,10 +240,18 @@ with col_right:
         st.error("Model could not be loaded. Detection is unavailable.")
 
         render_missing_model_help()
+    elif image is None:
+        st.info("Upload a valid image to run deepfake detection.")
     else:
         with st.spinner("Analyzing image with the deepfake model..."):
-
-            label, confidence, processed_image = predict_image(image)
+            if uploaded_image_bytes is not None:
+                processed_image = preprocess_uploaded_image(uploaded_image_bytes)
+                prediction = model.predict(processed_image, verbose=0)
+                class_label = np.argmax(prediction, axis=1)[0]
+                confidence = float(np.max(prediction))
+                label = "Real" if class_label == 0 else "Fake"
+            else:
+                label, confidence, processed_image = predict_image(image)
 
         if label is not None:
 

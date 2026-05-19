@@ -18,6 +18,8 @@ import cv2
 import numpy as np
 import pytest
 
+import preprocessing
+
 # ---------------------------------------------------------------------------
 # Stub Streamlit and metrics before app.py is imported.
 # Streamlit runs page-config, column layout, and widget calls at import
@@ -50,6 +52,7 @@ sys.modules.setdefault("metrics", _metrics_mock)
 
 import app  # noqa: E402 — must follow sys.modules stubs
 from app import predict_image, preprocess_image  # noqa: E402
+from app import preprocess_uploaded_image  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -214,3 +217,18 @@ class TestPredictImage:
             with patch.object(app, "model", mock_model):
                 label, _ = predict_image(make_blank_image())
             assert label in ("Real", "Fake"), f"Unexpected label: {label}"
+
+    def test_uploaded_image_preprocessing_is_cached_for_identical_bytes(self):
+        """Repeated preprocessing of the same upload should reuse the cached tensor."""
+        ok, encoded = cv2.imencode(".png", make_blank_image())
+        assert ok
+        image_bytes = encoded.tobytes()
+
+        preprocess_uploaded_image.cache_clear()
+
+        with patch.object(preprocessing, "preprocess_image_array", wraps=preprocessing.preprocess_image_array) as wrapped:
+            first = preprocess_uploaded_image(image_bytes)
+            second = preprocess_uploaded_image(image_bytes)
+
+        assert wrapped.call_count == 1
+        assert np.array_equal(first, second)

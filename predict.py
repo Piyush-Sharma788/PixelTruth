@@ -1,8 +1,7 @@
-import numpy as np
-import cv2
 import os
+import numpy as np
 from tensorflow.keras.models import load_model
-from tensorflow.keras.preprocessing.image import img_to_array
+from preprocessing import preprocess_image_bytes
 from model_utils import ensure_model_file, get_model_path, get_model_url, get_model_sha256
 
 MODEL_PATH = get_model_path()
@@ -26,15 +25,13 @@ def load_deepfake_model():
     return _model
 
 def preprocess_image(image_path):
-    image = cv2.imread(image_path)
-    if image is None:
+    if not os.path.exists(image_path):
         raise FileNotFoundError(f"Image nahi mili: {image_path}")
-    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)  # fix: cv2.imread returns BGR; model expects RGB (trained via PIL/ImageDataGenerator)
-    image = cv2.resize(image, (96, 96))
-    image = img_to_array(image)
-    image = np.expand_dims(image, axis=0)
-    image = image / 255.0
-    return image
+
+    with open(image_path, "rb") as file_handle:
+        image_bytes = file_handle.read()
+
+    return preprocess_image_bytes(image_bytes)
 
 def predict_image(image_path):
     model = load_deepfake_model()
