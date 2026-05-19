@@ -163,21 +163,21 @@ class TestPredictImage:
         """When model predicts class 0 with high confidence, label must be 'Real'."""
         mock_model = make_mock_model(np.array([[0.9, 0.1]]))
         with patch.object(app, "model", mock_model):
-            label, confidence = predict_image(make_blank_image())
+            label, confidence, _ = predict_image(make_blank_image())
         assert label == "Real"
 
     def test_returns_fake_label_when_class_1_wins(self):
         """When model predicts class 1 with high confidence, label must be 'Fake'."""
         mock_model = make_mock_model(np.array([[0.1, 0.9]]))
         with patch.object(app, "model", mock_model):
-            label, confidence = predict_image(make_blank_image())
+            label, confidence, _ = predict_image(make_blank_image())
         assert label == "Fake"
 
     def test_confidence_is_float(self):
         """Confidence score must be a Python float."""
         mock_model = make_mock_model(np.array([[0.8, 0.2]]))
         with patch.object(app, "model", mock_model):
-            label, confidence = predict_image(make_blank_image())
+            label, confidence, _ = predict_image(make_blank_image())
         assert isinstance(confidence, float), (
             f"Expected float confidence, got {type(confidence)}"
         )
@@ -186,15 +186,16 @@ class TestPredictImage:
         """Confidence must be in [0.0, 1.0]."""
         mock_model = make_mock_model(np.array([[0.7, 0.3]]))
         with patch.object(app, "model", mock_model):
-            label, confidence = predict_image(make_blank_image())
+            label, confidence, _ = predict_image(make_blank_image())
         assert 0.0 <= confidence <= 1.0, f"Confidence out of range: {confidence}"
 
     def test_none_model_returns_none_none(self):
         """If no model is loaded, both return values must be None."""
         with patch.object(app, "model", None):
-            label, confidence = predict_image(make_blank_image())
+            label, confidence, processed = predict_image(make_blank_image())
         assert label is None
         assert confidence is None
+        assert processed is None
 
     def test_model_receives_preprocessed_input(self):
         """model.predict must be called with a tensor of shape (1, 96, 96, 3)."""
@@ -208,9 +209,115 @@ class TestPredictImage:
 
 
     def test_label_is_one_of_valid_classes(self):
-        """Label must be exactly 'Real' or 'Fake', nothing else."""
+        """Label from predict_image must be exactly 'Real' or 'Fake', nothing else.
+
+        The 'Uncertain' state is a display-level decision in app.py based on
+        the confidence value; predict_image itself always returns Real or Fake.
+        """
         for prediction in [np.array([[0.9, 0.1]]), np.array([[0.1, 0.9]])]:
             mock_model = make_mock_model(prediction)
             with patch.object(app, "model", mock_model):
-                label, _ = predict_image(make_blank_image())
+                label, _, _ = predict_image(make_blank_image())
             assert label in ("Real", "Fake"), f"Unexpected label: {label}"
+
+
+# ---------------------------------------------------------------------------
+# LOW_CONFIDENCE_THRESHOLD / uncertain-state display logic  (issue #24)
+# ---------------------------------------------------------------------------
+
+class TestLowConfidenceThreshold:
+
+    # --- 1. Threshold constant validity ---
+
+    def test_threshold_constant_exists(self):
+        """LOW_CONFIDENCE_THRESHOLD must be defined at module level in app."""
+        assert hasattr(app, "LOW_CONFIDENCE_THRESHOLD"), (
+            "app.LOW_CONFIDENCE_THRESHOLD is not defined"
+        )
+
+    def test_threshold_is_float(self):
+        """LOW_CONFIDENCE_THRESHOLD must be a float or int (numeric)."""
+        assert isinstance(app.LOW_CONFIDENCE_THRESHOLD, (float, int)), (
+            f"Expected numeric threshold, got {type(app.LOW_CONFIDENCE_THRESHOLD)}"
+        )
+
+    def test_threshold_in_valid_range(self):
+        """LOW_CONFIDENCE_THRESHOLD must be strictly between 0.5 and 1.0.
+
+        Below 0.5 is impossible for a softmax argmax winner;
+        at 1.0 every prediction would be uncertain.
+        """
+        t = app.LOW_CONFIDENCE_THRESHOLD
+        assert 0.5 < t < 1.0, (
+            f"LOW_CONFIDENCE_THRESHOLD={t} is outside the valid range (0.5, 1.0)"
+        )
+
+    # --- 2. predict_image labels are unchanged for any confidence level ---
+
+    def test_low_confidence_real_label_unchanged(self):
+        """predict_image must still return 'Real' even when confidence < threshold.
+
+        The uncertain state is purely display-level; the model label itself
+        must not be suppressed or altered by the threshold.
+        """
+        # confidence = 0.62 < 0.70 threshold
+        mock_model = make_mock_model(np.array([[0.62, 0.38]]))
+        with patch.object(app, "model", mock_model):
+            label, confidence, _ = predict_image(make_blank_image())
+        assert label == "Real", (
+            f"Expected 'Real' for low-confidence class-0 prediction, got '{label}'"
+        )
+        assert abs(confidence - 0.62) < 1e-5, (
+            f"Confidence modified by threshold logic: expected 0.62, got {confidence}"
+        )
+
+    def test_low_confidence_fake_label_unchanged(self):
+        """predict_image must still return 'Fake' even when confidence < threshold."""
+        # confidence = 0.55 < 0.70 threshold
+        mock_model = make_mock_model(np.array([[0.45, 0.55]]))
+        with patch.object(app, "model", mock_model):
+            label, confidence, _ = predict_image(make_blank_image())
+        assert label == "Fake", (
+            f"Expected 'Fake' for low-confidence class-1 prediction, got '{label}'"
+        )
+        assert abs(confidence - 0.55) < 1e-5, (
+            f"Confidence modified by threshold logic: expected 0.55, got {confidence}"
+        )
+
+    # --- 3. is_uncertain condition fires correctly ---
+
+    def test_is_uncertain_true_below_threshold(self):
+        """confidence < LOW_CONFIDENCE_THRESHOLD must evaluate True for borderline values."""
+        t = app.LOW_CONFIDENCE_THRESHOLD
+        for conf in [0.51, 0.60, 0.62, 0.69, t - 0.001]:
+            assert conf < t, (
+                f"Expected {conf} < {t} (threshold) to be True — uncertain band broken"
+            )
+
+    def test_is_uncertain_false_at_or_above_threshold(self):
+        """confidence >= LOW_CONFIDENCE_THRESHOLD must evaluate False (high-confidence path)."""
+        t = app.LOW_CONFIDENCE_THRESHOLD
+        for conf in [t, t + 0.001, 0.80, 0.95, 1.0]:
+            assert conf >= t, (
+                f"Expected {conf} >= {t} (threshold) to be True — high-confidence band broken"
+            )
+
+    def test_high_confidence_real_does_not_trigger_uncertain(self):
+        """A high-confidence Real prediction must NOT hit the uncertain branch."""
+        mock_model = make_mock_model(np.array([[0.92, 0.08]]))
+        with patch.object(app, "model", mock_model):
+            label, confidence, _ = predict_image(make_blank_image())
+        assert label == "Real"
+        assert confidence >= app.LOW_CONFIDENCE_THRESHOLD, (
+            f"confidence={confidence} should be >= threshold={app.LOW_CONFIDENCE_THRESHOLD}"
+        )
+
+    def test_high_confidence_fake_does_not_trigger_uncertain(self):
+        """A high-confidence Fake prediction must NOT hit the uncertain branch."""
+        mock_model = make_mock_model(np.array([[0.05, 0.95]]))
+        with patch.object(app, "model", mock_model):
+            label, confidence, _ = predict_image(make_blank_image())
+        assert label == "Fake"
+        assert confidence >= app.LOW_CONFIDENCE_THRESHOLD, (
+            f"confidence={confidence} should be >= threshold={app.LOW_CONFIDENCE_THRESHOLD}"
+        )

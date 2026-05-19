@@ -63,6 +63,9 @@ custom_css = """
 .result-fake {
     border-left: 5px solid #ef4444;
 }
+.result-uncertain {
+    border-left: 5px solid #f59e0b;
+}
 .upload-box > div {
     border-radius: 18px !important;
     border: 1px dashed rgba(148,163,184,0.65) !important;
@@ -75,6 +78,12 @@ footer {visibility: hidden;}
 </style>
 """
 st.markdown(custom_css, unsafe_allow_html=True)
+
+# ---- Confidence threshold for the "Uncertain" display state ----
+# Predictions whose winning softmax probability is below this value are
+# shown as "Low Confidence — Uncertain" instead of a firm Real/Fake verdict.
+# Raise or lower this value to widen or narrow the uncertain band.
+LOW_CONFIDENCE_THRESHOLD = 0.70
 
 # ----------------------- LOAD MODEL ------------------------
 MODEL_PATH = get_model_path()
@@ -257,19 +266,21 @@ with col_right:
                 gradcam_image = None
 
             # ---------------- Result Styling ----------------
-            style_class = (
-                "result-real"
-                if label == "Real"
-                else "result-fake"
-            )
+            # Three display states: Uncertain (low confidence), Real, or Fake.
+            is_uncertain = confidence < LOW_CONFIDENCE_THRESHOLD
 
-            icon = "🟢" if label == "Real" else "🔴"
-
-            headline = (
-                "Authentic image"
-                if label == "Real"
-                else "Deepfake suspected"
-            )
+            if is_uncertain:
+                style_class = "result-uncertain"
+                icon = "🟡"
+                headline = "Low Confidence — Uncertain"
+            elif label == "Real":
+                style_class = "result-real"
+                icon = "🟢"
+                headline = "Authentic image"
+            else:
+                style_class = "result-fake"
+                icon = "🔴"
+                headline = "Deepfake suspected"
 
             # ---------------- Prediction Card ----------------
             st.markdown(
@@ -288,7 +299,16 @@ with col_right:
             st.markdown("</div>", unsafe_allow_html=True)
 
             # ---------------- Explanation Message ----------------
-            if label == "Fake":
+            if is_uncertain:
+
+                st.warning(
+                    f"The model's confidence is only {confidence * 100:.1f}% — "
+                    "this prediction is borderline and should not be treated as "
+                    "a definitive verdict. Consider using a higher-quality or "
+                    "less ambiguous image for a more reliable result."
+                )
+
+            elif label == "Fake":
 
                 st.error(
                     "The model detected patterns consistent with "
