@@ -3,10 +3,15 @@ import cv2
 import numpy as np
 import streamlit as st
 import streamlit.components.v1 as components
+import logging
 from tensorflow.keras.models import load_model
 from tensorflow.keras.preprocessing.image import img_to_array
 
 from gradcam import make_gradcam_heatmap, overlay_heatmap
+from exceptions import PreprocessingError, ModelExecutionError
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(name)s: %(message)s')
+logger = logging.getLogger(__name__)
 
 from metrics import (
     get_sample_metrics,
@@ -128,22 +133,30 @@ def render_missing_model_help():
 
 # ----------------------- IMAGE PIPELINE --------------------
 def preprocess_image(image):
-    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)  # fix: OpenCV loads BGR; model expects RGB (trained via PIL/ImageDataGenerator)
-    image = cv2.resize(image, (96, 96))
-    image = img_to_array(image)
-    image = np.expand_dims(image, axis=0)
-    image = image / 255.0
-    return image
+    try:
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)  # fix: OpenCV loads BGR; model expects RGB (trained via PIL/ImageDataGenerator)
+        image = cv2.resize(image, (96, 96))
+        image = img_to_array(image)
+        image = np.expand_dims(image, axis=0)
+        image = image / 255.0
+        return image
+    except Exception as e:
+        logger.error(f"Image preprocessing failed: {e}", exc_info=True)
+        raise PreprocessingError(f"Failed to preprocess image: {str(e)}") from e
 
 def predict_image(image):
     if model is None:
         return None, None, None
     processed_image = preprocess_image(image)
-    prediction = model.predict(processed_image, verbose=0)
-    class_label = np.argmax(prediction, axis=1)[0]
-    confidence = float(np.max(prediction))
-    label = "Real" if class_label == 0 else "Fake"
-    return label, confidence, processed_image
+    try:
+        prediction = model.predict(processed_image, verbose=0)
+        class_label = np.argmax(prediction, axis=1)[0]
+        confidence = float(np.max(prediction))
+        label = "Real" if class_label == 0 else "Fake"
+        return label, confidence, processed_image
+    except Exception as e:
+        logger.error(f"Model inference failed: {e}", exc_info=True)
+        raise ModelExecutionError(f"Model prediction failed: {str(e)}") from e
 
 def find_last_conv_layer(model):
     for layer in reversed(model.layers):
@@ -241,8 +254,20 @@ with col_right:
         render_missing_model_help()
     else:
         with st.spinner("Analyzing image with the deepfake model..."):
-
-            label, confidence, processed_image = predict_image(image)
+            try:
+                label, confidence, processed_image = predict_image(image)
+            except PreprocessingError as e:
+                logger.error(f"Caught PreprocessingError in UI: {e}", exc_info=True)
+                st.error("⚠️ There was an issue processing the uploaded image. Please ensure it is a valid and uncorrupted image file.")
+                label, confidence, processed_image = None, None, None
+            except ModelExecutionError as e:
+                logger.error(f"Caught ModelExecutionError in UI: {e}", exc_info=True)
+                st.error("⚠️ The AI model encountered an error during analysis. Please try a different image or try again later.")
+                label, confidence, processed_image = None, None, None
+            except Exception as e:
+                logger.error(f"Caught unexpected Runtime error in UI: {e}", exc_info=True)
+                st.error("⚠️ An unexpected runtime error occurred. Our team has been notified via logs.")
+                label, confidence, processed_image = None, None, None
 
         if label is not None:
 
@@ -253,6 +278,7 @@ with col_right:
                 heatmap = make_gradcam_heatmap(processed_image, backbone_model, last_conv_layer)
                 gradcam_image = overlay_heatmap(image, heatmap)
             except Exception as e:
+                logger.warning(f"Grad-CAM visualization failed: {e}", exc_info=True)
                 st.warning(f"Grad-CAM visualization could not be generated: {str(e)}")
                 gradcam_image = None
 
