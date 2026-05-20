@@ -1,36 +1,19 @@
 """
 Model Analytics Module - Deepfake Detection Metrics & Visualizations
 This module provides helper functions to display model performance metrics,
-confusion matrices, ROC curves, and dataset distributions.
+confusion matrices, ROC curves, and dataset distributions using Plotly.
 """
 
 import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
+import plotly.express as px
+import plotly.graph_objects as go
 from sklearn.metrics import roc_curve, auc
-
 
 # ==================== THEME CONFIGURATION ====================
 DARK_BG = '#0f172a'
 DARK_CARD = '#1e293b'
 TEXT_COLOR = '#e5e7eb'
 BORDER_COLOR = '#475569'
-
-
-def apply_dark_theme(fig, ax):
-    """
-    Applies consistent dark theme styling to matplotlib figures.
-    
-    Args:
-        fig: matplotlib figure object
-        ax: matplotlib axes object
-    """
-    fig.patch.set_facecolor(DARK_BG)
-    ax.set_facecolor(DARK_CARD)
-    ax.tick_params(colors=TEXT_COLOR)
-    for spine in ax.spines.values():
-        spine.set_color(BORDER_COLOR)
-    return fig, ax
 
 
 # ==================== SAMPLE METRICS ====================
@@ -54,37 +37,50 @@ def get_sample_metrics():
 def get_confusion_matrix_plot():
     """
     Generates a confusion matrix heatmap for binary classification
-    (Real vs Fake deepfake detection).
+    (Real vs Fake deepfake detection) using Plotly.
     
     Returns:
-        matplotlib figure object
+        plotly.graph_objects.Figure
     """
     # Sample confusion matrix: [True Negatives, False Positives]
     #                          [False Negatives, True Positives]
     cm = np.array([[475, 25],    # Real images: 475 correct, 25 misclassified
                    [23, 477]])   # Fake images: 23 misclassified, 477 correct
     
-    fig, ax = plt.subplots(figsize=(7, 5.5))
-    apply_dark_theme(fig, ax)
-    
-    # Create heatmap
-    sns.heatmap(
+    fig = px.imshow(
         cm,
-        annot=True,
-        fmt='d',
-        cmap='RdYlGn',
-        cbar=True,
-        ax=ax,
-        xticklabels=['Real', 'Fake'],
-        yticklabels=['Real', 'Fake'],
-        cbar_kws={'label': 'Count'}
+        labels=dict(x="Predicted Label", y="True Label", color="Count"),
+        x=['Real', 'Fake'],
+        y=['Real', 'Fake'],
+        color_continuous_scale='RdYlGn',
+        text_auto=True
     )
     
-    ax.set_ylabel('True Label', color=TEXT_COLOR)
-    ax.set_xlabel('Predicted Label', color=TEXT_COLOR)
-    ax.set_title('Confusion Matrix', color=TEXT_COLOR, fontsize=13, fontweight='bold', pad=15)
+    # Enable explicit beautiful hover details
+    fig.update_traces(
+        hovertemplate="<b>True Label:</b> %{y}<br><b>Predicted Label:</b> %{x}<br><b>Count:</b> %{z}<extra></extra>"
+    )
     
-    plt.tight_layout()
+    fig.update_layout(
+        title={
+            'text': "Confusion Matrix",
+            'y': 0.95,
+            'x': 0.5,
+            'xanchor': 'center',
+            'yanchor': 'top',
+            'font': {'size': 15, 'color': TEXT_COLOR, 'family': 'sans-serif'}
+        },
+        xaxis=dict(side='bottom', color=TEXT_COLOR, gridcolor='#475569'),
+        yaxis=dict(autorange='reversed', color=TEXT_COLOR, gridcolor='#475569'),
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+        font=dict(color=TEXT_COLOR),
+        margin=dict(l=60, r=40, t=80, b=60),
+        height=380,
+        autosize=True,
+        dragmode='zoom'  
+    )
+    
     return fig
 
 
@@ -96,17 +92,17 @@ def get_confusion_matrix_caption():
     )
 
 
-
 # ==================== ROC CURVE ====================
 def get_roc_curve_plot():
     """
-    Generates a ROC (Receiver Operating Characteristic) curve.
+    Generates a ROC (Receiver Operating Characteristic) curve using Plotly.
     Shows the trade-off between True Positive Rate and False Positive Rate.
     
     Returns:
-        matplotlib figure object
+        plotly.graph_objects.Figure
     """
-    # Sample data: true labels (0=Real, 1=Fake) and predicted probabilities
+    #Set seed to keep it reproducible
+    np.random.seed(42)
     y_true = np.array([0]*500 + [1]*500)  # 500 real, 500 fake
     
     # Predicted probabilities (higher = more confident it's fake)
@@ -119,22 +115,57 @@ def get_roc_curve_plot():
     fpr, tpr, _ = roc_curve(y_true, y_prob)
     roc_auc = auc(fpr, tpr)
     
-    fig, ax = plt.subplots(figsize=(7, 5.5))
-    apply_dark_theme(fig, ax)
+    fig = go.Figure()
     
     # Plot ROC curve
-    ax.plot(fpr, tpr, color='#22c55e', lw=3, label=f'ROC Curve (AUC = {roc_auc:.3f})')
-    ax.plot([0, 1], [0, 1], color='#94a3b8', lw=2, linestyle='--', label='Random')
+    fig.add_trace(go.Scatter(
+        x=fpr, 
+        y=tpr, 
+        mode='lines', 
+        name=f'ROC Curve (AUC = {roc_auc:.3f})',
+        line=dict(color='#22c55e', width=3),
+        hovertemplate="<b>False Positive Rate (FPR):</b> %{x:.3f}<br><b>True Positive Rate (TPR):</b> %{y:.3f}<extra></extra>"
+    ))
     
-    ax.set_xlim([0.0, 1.0])
-    ax.set_ylim([0.0, 1.05])
-    ax.set_xlabel('False Positive Rate', color=TEXT_COLOR, fontsize=11)
-    ax.set_ylabel('True Positive Rate', color=TEXT_COLOR, fontsize=11)
-    ax.set_title('ROC Curve', color=TEXT_COLOR, fontsize=13, fontweight='bold', pad=15)
-    ax.legend(loc="lower right", facecolor=DARK_CARD, edgecolor=BORDER_COLOR, labelcolor=TEXT_COLOR, fontsize=10)
-    ax.grid(True, alpha=0.2, color=BORDER_COLOR)
+    # Plot Random line
+    fig.add_trace(go.Scatter(
+        x=[0, 1], 
+        y=[0, 1], 
+        mode='lines', 
+        name='Random Guess',
+        line=dict(color='#94a3b8', width=2, dash='dash'),
+        hovertemplate="<b>FPR:</b> %{x:.3f}<br><b>TPR:</b> %{y:.3f}<extra></extra>"
+    ))
     
-    plt.tight_layout()
+    fig.update_layout(
+        title={
+            'text': "ROC Curve",
+            'y': 0.95,
+            'x': 0.5,
+            'xanchor': 'center',
+            'yanchor': 'top',
+            'font': {'size': 15, 'color': TEXT_COLOR, 'family': 'sans-serif'}
+        },
+        xaxis=dict(title='False Positive Rate', gridcolor='#475569', color=TEXT_COLOR),
+        yaxis=dict(title='True Positive Rate', gridcolor='#475569', color=TEXT_COLOR),
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+        font=dict(color=TEXT_COLOR),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1,
+            bgcolor='rgba(0,0,0,0)'
+        ),
+        margin=dict(l=60, r=40, t=80, b=60),
+        height=380,
+        autosize=True,
+        dragmode='zoom',  # Enables drag-to-zoom curves
+        hovermode='closest'  # Ensures highly interactive hovering over the closest point
+    )
+    
     return fig
 
 
@@ -146,57 +177,55 @@ def get_roc_curve_caption():
     )
 
 
-
 # ==================== DATASET DISTRIBUTION ====================
 def get_dataset_distribution_plot():
     """
-    Generates a class distribution chart showing the breakdown of
-    Real vs Fake images in the training/testing dataset.
+    Generates a class distribution donut chart showing the breakdown of
+    Real vs Fake images in the training/testing dataset using Plotly.
     
     Returns:
-        matplotlib figure object
+        plotly.graph_objects.Figure
     """
     # Sample dataset distribution
     labels = ['Real Images', 'Fake Images']
     sizes = [5000, 5000]  # Balanced dataset
     colors = ['#22c55e', '#ef4444']
-    explode = (0.05, 0.05)
     
-    fig, ax = plt.subplots(figsize=(7, 5.5))
-    fig.patch.set_facecolor(DARK_BG)
-    ax.set_facecolor(DARK_BG)
+    fig = go.Figure(data=[go.Pie(
+        labels=labels, 
+        values=sizes,
+        hole=0.4,
+        marker=dict(colors=colors, line=dict(color=DARK_BG, width=2)),
+        textinfo='percent+label',
+        insidetextorientation='radial',
+        hovertemplate="<b>%{label}</b><br><b>Samples:</b> %{value:,}<br><b>Percentage:</b> %{percent}<extra></extra>"
+    )])
     
-    wedges, texts, autotexts = ax.pie(
-        sizes,
-        explode=explode,
-        labels=labels,
-        colors=colors,
-        autopct='%1.1f%%',
-        shadow=True,
-        startangle=90,
-        textprops={'color': TEXT_COLOR, 'fontsize': 10}
+    fig.update_layout(
+        title={
+            'text': "Class Distribution",
+            'y': 0.95,
+            'x': 0.5,
+            'xanchor': 'center',
+            'yanchor': 'top',
+            'font': {'size': 15, 'color': TEXT_COLOR, 'family': 'sans-serif'}
+        },
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+        font=dict(color=TEXT_COLOR),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=-0.1,
+            xanchor="center",
+            x=0.5,
+            bgcolor='rgba(0,0,0,0)'
+        ),
+        margin=dict(l=40, r=40, t=80, b=40),
+        height=380,
+        autosize=True
     )
     
-    # Style percentage text
-    for autotext in autotexts:
-        autotext.set_color(DARK_BG)
-        autotext.set_fontweight('bold')
-        autotext.set_fontsize(11)
-    
-    # Add legend with counts
-    ax.legend(
-        [f'{labels[0]} ({sizes[0]:,})', f'{labels[1]} ({sizes[1]:,})'],
-        loc='upper left',
-        bbox_to_anchor=(0.85, 1),
-        facecolor=DARK_CARD,
-        edgecolor=BORDER_COLOR,
-        labelcolor=TEXT_COLOR,
-        fontsize=10
-    )
-    
-    ax.set_title('Class Distribution', color=TEXT_COLOR, fontsize=13, fontweight='bold', pad=15)
-    
-    plt.tight_layout()
     return fig
 
 
@@ -206,7 +235,6 @@ def get_dataset_distribution_caption():
         "Displays the balance between Real and Fake images in the dataset. "
         "Equal distribution (50/50) helps train unbiased models."
     )
-
 
 
 # ==================== CLASS STATISTICS ====================

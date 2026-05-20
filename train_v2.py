@@ -8,18 +8,25 @@ from tensorflow.keras.preprocessing.image import ImageDataGenerator
 
 dataset_path = "real_and_fake_face_detection/real_vs_fake/real-vs-fake/train"
 
-data_with_aug = ImageDataGenerator(horizontal_flip=True,
-                                   vertical_flip=False,
-                                   rescale=1./255,
-                                   validation_split=0.2)
+train_datagen = ImageDataGenerator(
+    horizontal_flip=True,
+    vertical_flip=False,
+    rescale=1./255,
+    validation_split=0.2
+)
 
-train = data_with_aug.flow_from_directory(dataset_path,
+val_datagen = ImageDataGenerator(
+    rescale=1./255,
+    validation_split=0.2
+)
+
+train = train_datagen.flow_from_directory(dataset_path,
                                           class_mode="binary",
                                           target_size=(96, 96),
                                           batch_size=128,
                                           subset="training")
 
-val = data_with_aug.flow_from_directory(dataset_path,
+val = val_datagen.flow_from_directory(dataset_path,
                                           class_mode="binary",
                                           target_size=(96, 96),
                                           batch_size=128,
