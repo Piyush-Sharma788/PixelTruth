@@ -339,3 +339,47 @@ class TestLowConfidenceThreshold:
         assert confidence >= app.LOW_CONFIDENCE_THRESHOLD, (
             f"confidence={confidence} should be >= threshold={app.LOW_CONFIDENCE_THRESHOLD}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Model Cache Invalidation (Streamlit resource cache modification state)
+# ---------------------------------------------------------------------------
+
+class TestModelCacheInvalidation:
+
+    def test_get_model_mtime_file_exists(self):
+        """get_model_mtime should return the file's modification time if it exists."""
+        with patch("os.path.getmtime") as mock_getmtime:
+            mock_getmtime.return_value = 12345.67
+            mtime = app.get_model_mtime("dummy_path.h5")
+            assert mtime == 12345.67
+            mock_getmtime.assert_called_once_with("dummy_path.h5")
+
+    def test_get_model_mtime_file_not_found(self):
+        """get_model_mtime should return 0.0 if the file does not exist (OSError/FileNotFoundError)."""
+        with patch("os.path.getmtime") as mock_getmtime:
+            mock_getmtime.side_effect = FileNotFoundError()
+            mtime = app.get_model_mtime("dummy_path.h5")
+            assert mtime == 0.0
+
+    def test_load_deepfake_model_calls_load_model_safe(self):
+        """load_deepfake_model should invoke load_model_safe with correct parameters."""
+        with patch("app.load_model_safe") as mock_load_safe:
+            mock_load_safe.return_value = "mocked_model"
+            res = app.load_deepfake_model(12345.67)
+            assert res == "mocked_model"
+            mock_load_safe.assert_called_once_with(
+                model_path=app.MODEL_PATH,
+                model_url=app.MODEL_URL,
+                model_sha256=app.MODEL_SHA256,
+                download_if_missing=True,
+            )
+
+    def test_load_deepfake_model_handles_exception(self):
+        """load_deepfake_model should handle exceptions and display an error using streamlit."""
+        with patch("app.load_model_safe") as mock_load_safe, patch.object(app.st, "error") as mock_st_error:
+            mock_load_safe.side_effect = Exception("Failed to load")
+            res = app.load_deepfake_model(12345.67)
+            assert res is None
+            mock_st_error.assert_called_once_with("Error loading model: Failed to load")
+

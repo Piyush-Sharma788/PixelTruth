@@ -100,8 +100,15 @@ MODEL_URL = get_model_url()
 MODEL_SHA256 = get_model_sha256()
 
 
+def get_model_mtime(path: str) -> float:
+    try:
+        return os.path.getmtime(path)
+    except OSError:
+        return 0.0
+
+
 @st.cache_resource
-def load_deepfake_model():
+def load_deepfake_model(model_mtime: float):
     try:
         return load_model_safe(
             model_path=MODEL_PATH,
@@ -119,7 +126,7 @@ model = None
 
 # Load the cached model during Streamlit execution so predictions can run
 # when a configured model file or download source is available.
-model = load_deepfake_model()
+model = load_deepfake_model(get_model_mtime(MODEL_PATH))
 
 
 def render_missing_model_help():
