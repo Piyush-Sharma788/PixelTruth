@@ -1,11 +1,10 @@
-import numpy as np
 from tensorflow.keras.applications.mobilenet_v2 import MobileNetV2
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dropout, Dense, BatchNormalization, GlobalAveragePooling2D
 import tensorflow as tf
 import matplotlib.pyplot as plt
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
-import os
+
 
 dataset_path = "real_and_fake_face_detection/real_vs_fake/real-vs-fake/train"
 

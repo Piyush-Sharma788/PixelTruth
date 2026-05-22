@@ -1,20 +1,19 @@
 import os
-import cv2
 import numpy as np
 import pandas as pd
 from datetime import datetime
 import streamlit as st
-import streamlit.components.v1 as components
-from preprocessing import decode_image_bytes, preprocess_image_array, preprocess_image_bytes
+from preprocessing import decode_image_bytes, preprocess_image_bytes
 import logging
-from tensorflow.keras.models import load_model
-
 from gradcam import make_gradcam_heatmap, overlay_heatmap
 from exceptions import PreprocessingError, ModelExecutionError
-
-logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(name)s: %(message)s')
-logger = logging.getLogger(__name__)
-
+from inference import (
+    preprocess_image,
+    preprocess_uploaded_image as _preprocess_uploaded_image,
+    predict_image as _predict_image,
+    find_last_conv_layer,
+    load_model_safe,
+)
 from metrics import (
     get_sample_metrics,
     get_confusion_matrix_plot,
@@ -25,7 +24,10 @@ from metrics import (
     get_roc_curve_caption,
     get_dataset_distribution_caption,
 )
-from model_utils import ensure_model_file, get_model_path, get_model_url, get_model_sha256
+from model_utils import get_model_path, get_model_url, get_model_sha256
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(name)s: %(message)s')
+logger = logging.getLogger(__name__)
 
 st.set_page_config(
     page_title="PixelTruth",
@@ -101,18 +103,19 @@ MODEL_SHA256 = get_model_sha256()
 @st.cache_resource
 def load_deepfake_model():
     try:
-        model_file_path = ensure_model_file(
+        return load_model_safe(
             model_path=MODEL_PATH,
             model_url=MODEL_URL,
             model_sha256=MODEL_SHA256,
             download_if_missing=True,
         )
-        return load_model(model_file_path)
     except Exception as e:
         st.error(f"Error loading model: {str(e)}")
         return None
 
-model = load_deepfake_model()
+# Do not load the model at import time; tests and static analysis may
+# import this module without wanting heavy model-loading side effects.
+model = None
 
 
 def render_missing_model_help():
@@ -143,55 +146,25 @@ def render_missing_model_help():
     )
 
 # ----------------------- IMAGE PIPELINE --------------------
-def preprocess_image(image):
-    return preprocess_image_array(image)
 
+# For uploaded-bytes preprocessing we reuse the lru-cached helper from
+# `preprocessing.py`. Expose it under the app-level name so tests can
+# call `preprocess_uploaded_image.cache_clear()` etc.
+preprocess_uploaded_image = _preprocess_uploaded_image
+try:
+    preprocess_uploaded_image.cache_clear = preprocess_image_bytes.cache_clear
+    preprocess_uploaded_image.cache_info = preprocess_image_bytes.cache_info
+except Exception:
+    # If underlying function doesn't expose cache helpers, ignore.
+    pass
 
-def preprocess_uploaded_image(image_bytes):
-    return preprocess_image_bytes(image_bytes)
-
-
-preprocess_uploaded_image.cache_clear = preprocess_image_bytes.cache_clear
-preprocess_uploaded_image.cache_info = preprocess_image_bytes.cache_info
-
-def preprocess_image(image):
-    # Use the shared preprocessing implementation when possible
-    try:
-        # If preprocessing was implemented in `preprocessing.py`, prefer that
-        return preprocess_image_array(image)
-    except Exception:
-        # Fallback to an inline implementation (keeps compatibility with main branch)
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        image = cv2.resize(image, (96, 96))
-        image = img_to_array(image)
-        image = np.expand_dims(image, axis=0)
-        image = image / 255.0
-        return image
-
-
-def preprocess_uploaded_image(image_bytes):
-    # Keep the PR's caching wrapper which delegates to preprocessing.preprocess_image_bytes
-    return preprocess_image_bytes(image_bytes)
-
-
-# Expose cache control helpers so tests and callers can clear or inspect cache
-preprocess_uploaded_image.cache_clear = preprocess_image_bytes.cache_clear
-preprocess_uploaded_image.cache_info = preprocess_image_bytes.cache_info
+# Mark exported helper as used so linters don't report an unused-import
+_ = preprocess_image
 
 
 def predict_image(image):
-    if model is None:
-        return None, None, None
-    processed_image = preprocess_image(image)
-    try:
-        prediction = model.predict(processed_image, verbose=0)
-        class_label = np.argmax(prediction, axis=1)[0]
-        confidence = float(np.max(prediction))
-        label = "Real" if class_label == 0 else "Fake"
-        return label, confidence, processed_image
-    except Exception as e:
-        logger.error(f"Model inference failed: {e}", exc_info=True)
-        raise ModelExecutionError(f"Model prediction failed: {str(e)}") from e
+    # Use the module-level model variable so tests can patch app.model.
+    return _predict_image(model, image)
 # ----------------------- HEADER / HERO ---------------------
 st.markdown("<h1 class='main-title'>DEEPFAKE SENTINEL</h1>", unsafe_allow_html=True)
 st.markdown(
