@@ -29,9 +29,10 @@ val_ds = tf.keras.utils.image_dataset_from_directory(
 )
 
 AUTOTUNE = tf.data.AUTOTUNE
-# Improve pipeline performance with shuffle and prefetch
-train_ds = train_ds.shuffle(1000).prefetch(AUTOTUNE)
-val_ds = val_ds.prefetch(AUTOTUNE)
+
+# Improve pipeline performance with shuffle, cache and prefetch
+train_ds = train_ds.shuffle(1000).cache().prefetch(AUTOTUNE)
+val_ds = val_ds.cache().prefetch(AUTOTUNE)
 
 mnet = MobileNetV2(include_top=False, weights="imagenet", input_shape=(96, 96, 3))
 mnet.trainable = False

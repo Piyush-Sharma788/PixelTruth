@@ -30,9 +30,9 @@ val_ds = tf.keras.utils.image_dataset_from_directory(
 
 AUTOTUNE = tf.data.AUTOTUNE
 
-# Improve pipeline performance with shuffle and prefetch
-train_ds = train_ds.shuffle(buffer_size=1000).prefetch(buffer_size=AUTOTUNE)
-val_ds = val_ds.prefetch(buffer_size=AUTOTUNE)
+# Improve pipeline performance with shuffle, cache and prefetch
+train_ds = train_ds.shuffle(buffer_size=1000).cache().prefetch(buffer_size=AUTOTUNE)
+val_ds = val_ds.cache().prefetch(buffer_size=AUTOTUNE)
 
 mnet = MobileNetV2(include_top=False, weights="imagenet", input_shape=(96, 96, 3))
 
@@ -52,7 +52,11 @@ model = Sequential([
     Dense(1, activation="sigmoid")
     ])
 
-model.compile(loss="binary_crossentropy", optimizer=tf.keras.optimizers.Adam(0.001), metrics=["accuracy"])
+model.compile(
+            loss="binary_crossentropy",
+            optimizer=tf.keras.optimizers.Adam(0.001),
+            metrics=["accuracy"]
+)
 model.summary()
 
 print("\n🔒 Phase 1 — Frozen MobileNet (5 epochs)")
@@ -64,7 +68,11 @@ mnet.trainable = True
 for layer in mnet.layers[:-30]:
     layer.trainable = False
 
-model.compile(loss="binary_crossentropy", optimizer=tf.keras.optimizers.Adam(0.00001), metrics=["accuracy"])
+model.compile(
+    loss="binary_crossentropy", 
+    optimizer=tf.keras.optimizers.Adam(0.00001), 
+    metrics=["accuracy"]
+)
 
 hist2 = model.fit(train_ds, epochs=5, validation_data=val_ds)
 

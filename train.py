@@ -30,10 +30,10 @@ val_ds = tf.keras.utils.image_dataset_from_directory(
 )
 
 AUTOTUNE = tf.data.AUTOTUNE
-# Improve pipeline performance with shuffle and prefetch
-train_ds = train_ds.shuffle(buffer_size=1000).prefetch(buffer_size=AUTOTUNE)
-val_ds = val_ds.prefetch(buffer_size=AUTOTUNE)
 
+# Improve pipeline performance with shuffle, cache and prefetch
+train_ds = train_ds.shuffle(buffer_size=1000).cache().prefetch(buffer_size=AUTOTUNE)
+val_ds = val_ds.cache().prefetch(buffer_size=AUTOTUNE)
 
 
 mnet = MobileNetV2(include_top=False, weights="imagenet", input_shape=(96, 96, 3))
@@ -48,10 +48,13 @@ model = Sequential([
     Dropout(0.3),
     Dense(128, activation="relu"),
     Dropout(0.1),
-    Dense(1, activation="sigmoid")])
+    Dense(1, activation="sigmoid")
+    ])
 
 mnet.trainable = False
-model.compile(loss="binary_crossentropy", optimizer="adam", metrics=["accuracy"])
+model.compile(loss="binary_crossentropy",
+               optimizer="adam",
+               metrics=["accuracy"])
 model.summary()
 
 def scheduler(epoch):
@@ -98,4 +101,4 @@ plt.title('Train Accuracy vs Validation Accuracy')
 plt.grid(True)
 plt.legend(['Train', 'Validation'], loc=4)
 plt.savefig('Figure_2.png')
-print(" Graphs saved!")
+print("Graphs saved!")
