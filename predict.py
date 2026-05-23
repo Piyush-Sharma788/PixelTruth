@@ -1,7 +1,16 @@
+"""
+PixelTruth — unified inference pipeline.
+
+This module is the **single source of truth** for image preprocessing and
+deepfake prediction.  Both the Streamlit dashboard (``app.py``) and the CLI
+import from here, ensuring identical behaviour regardless of the entry-point.
+"""
+
 import argparse
 import json
 import os
 import sys
+from pathlib import Path
 
 import numpy as np
 from preprocessing import preprocess_image_bytes
@@ -22,7 +31,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Image helpers
+# Unified preprocessing — accepts file paths, numpy arrays, or raw bytes
 # ---------------------------------------------------------------------------
 
 SUPPORTED_EXTENSIONS = {
@@ -35,28 +44,37 @@ SUPPORTED_EXTENSIONS = {
     ".tif",
 }
 
+def preprocess_image(image_input) -> np.ndarray:
+    """Preprocess an image for model inference.
 
-def preprocess_image(image_path: str) -> np.ndarray:
-    """Read and preprocess an image for the model via shared byte-based pipeline.
+    Accepts multiple input types so that every caller (CLI, Streamlit, tests)
+    can use a single function:
+
+    * **str / Path** — filesystem path; the file is read and decoded.
+    * **bytes** — raw image bytes (e.g. from ``UploadedFile.read()``).
+    * **np.ndarray** — a BGR image already loaded into memory.
 
     Parameters
     ----------
-    image_path:
-        Filesystem path to the image file.
+    image_input:
+        The image to preprocess. See above for accepted types.
 
     Returns
     -------
     np.ndarray
-        Shape ``(1, 96, 96, 3)``, values in ``[0, 1]``.
+        Shape ``(1, H, W, 3)`` with values in ``[0, 1]``, channels in RGB
+        order — ready to be passed directly to ``model.predict()``.
 
     Raises
     ------
     FileNotFoundError
-        When *image_path* does not exist on disk.
+        When a path string is provided but the file does not exist.
     ValueError
-        When the file extension is not supported.
+        When a path has an unsupported extension, or bytes cannot be decoded.
     PreprocessingError
-        When the file exists but cannot be decoded or preprocessed.
+        When preprocessing fails for any other reason.
+    TypeError
+        When *image_input* is not a supported type.
     """
 
     if not os.path.exists(image_path):
@@ -90,7 +108,7 @@ def preprocess_image(image_path: str) -> np.ndarray:
 
 
 # ---------------------------------------------------------------------------
-# Prediction
+# Unified prediction
 # ---------------------------------------------------------------------------
 
 def predict_image(
@@ -110,8 +128,13 @@ def predict_image(
     Returns
     -------
     dict
-        ``{"image": str, "label": "Real"|"Fake", "confidence": float,
-           "raw": list[float]}``
+        ``{"label": "Real"|"Fake", "confidence": float, "raw": list[float],
+          "processed_image": np.ndarray}``
+
+        * ``confidence`` is a **float in [0, 1]** (NOT a percentage).
+        * ``processed_image`` is the preprocessed tensor used for inference.
+        * For CLI callers the dict also includes ``"image": str`` when a path
+          was provided.
 
     Raises
     ------
@@ -164,12 +187,37 @@ def predict_image(
     # class 1 = Fake
     label = "Fake" if class_index == 1 else "Real"
 
-    return {
-        "image": image_path,
+    result: dict = {
         "label": label,
-        "confidence": round(confidence, 1),
+        "confidence": confidence,
         "raw": prediction[0].tolist(),
+        "processed_image": processed,
     }
+
+    # Include path metadata when the input was a file path
+    if isinstance(image_input, (str, Path)):
+        result["image"] = str(image_input)
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Convenience wrappers (backward-compat for app.py)
+# ---------------------------------------------------------------------------
+
+
+def predict_image_tuple(image_input):
+    """Thin wrapper returning ``(label, confidence, processed_image)``.
+
+    Used by ``app.py`` which was originally built around a tuple return value.
+    If no model is loaded, returns ``(None, None, None)``.
+    """
+    try:
+        result = predict_image(image_input)
+    except Exception:
+        # When model loading fails altogether, mirror the old None-tuple.
+        return None, None, None
+    return result["label"], result["confidence"], result["processed_image"]
 
 
 # ---------------------------------------------------------------------------

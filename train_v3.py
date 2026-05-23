@@ -1,57 +1,60 @@
 from tensorflow.keras.applications.mobilenet_v2 import MobileNetV2
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dropout, Dense, BatchNormalization, GlobalAveragePooling2D
+from tensorflow.keras.layers import Dropout, Dense, BatchNormalization, GlobalAveragePooling2D, Rescaling, RandomFlip
 import tensorflow as tf
 import matplotlib.pyplot as plt
-from tensorflow.keras.preprocessing.image import ImageDataGenerator
+
 from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping
 
 dataset_path = "real_and_fake_face_detection/real_vs_fake/real-vs-fake/train"
 
-train_datagen = ImageDataGenerator(
-    horizontal_flip=True,
-    rotation_range=10,
-    zoom_range=0.1,
-    rescale=1./255,
-    validation_split=0.2
+train_ds = tf.keras.utils.image_dataset_from_directory(
+    dataset_path,
+    validation_split=0.2,
+    subset="training",
+    seed=123,
+    image_size=(96, 96),
+    batch_size=128,
+    label_mode="binary"
 )
 
-val_datagen = ImageDataGenerator(
-    rescale=1./255,
-    validation_split=0.2
+val_ds = tf.keras.utils.image_dataset_from_directory(
+    dataset_path,
+    validation_split=0.2,
+    subset="validation",
+    seed=123,
+    image_size=(96, 96),
+    batch_size=128,
+    label_mode="binary"
 )
 
-train = train_datagen.flow_from_directory(dataset_path,
-                                          class_mode="binary",
-                                          target_size=(96, 96),
-                                          batch_size=128,
-                                          subset="training")
+AUTOTUNE = tf.data.AUTOTUNE
 
-val = val_datagen.flow_from_directory(dataset_path,
-                                          class_mode="binary",
-                                          target_size=(96, 96),
-                                          batch_size=128,
-                                          subset="validation")
-
-print(f"Class indices: {train.class_indices}")
+# Improve pipeline performance with shuffle, cache and prefetch
+train_ds = train_ds.shuffle(1000).cache().prefetch(AUTOTUNE)
+val_ds = val_ds.cache().prefetch(AUTOTUNE)
 
 mnet = MobileNetV2(include_top=False, weights="imagenet", input_shape=(96, 96, 3))
 mnet.trainable = False
 
-model = Sequential([mnet,
-                    GlobalAveragePooling2D(),
-                    Dense(512, activation="relu"),
-                    BatchNormalization(),
-                    Dropout(0.4),
-                    Dense(128, activation="relu"),
-                    Dropout(0.2),
-                    Dense(2, activation="softmax")])
+model = Sequential([
+    RandomFlip("horizontal"),
+    Rescaling(1./255),
+    mnet,
+    GlobalAveragePooling2D(),
+    Dense(512, activation="relu"),
+    BatchNormalization(),
+    Dropout(0.4),
+    Dense(128, activation="relu"),
+    Dropout(0.2),
+    Dense(1, activation="sigmoid")
+    ])
 
-model.compile(loss="sparse_categorical_crossentropy",
+model.compile(loss="binary_crossentropy",
               optimizer=tf.keras.optimizers.Adam(0.001),
               metrics=["accuracy"])
 
-# Class weights — fake aur real ko equal importance
+# Class weights to balance fake and real classes
 class_weight = {0: 1.5, 1: 1.0}
 
 # Save the model only when validation loss improves
@@ -73,19 +76,19 @@ early_stop = EarlyStopping(
 callbacks_list = [checkpoint, early_stop]
 
 print("Phase 1 - Frozen (5 epochs)")
-hist1 = model.fit(train, epochs=5, validation_data=val, class_weight=class_weight, callbacks=callbacks_list)
+hist1 = model.fit(train_ds, epochs=5, validation_data=val_ds, class_weight=class_weight, callbacks=callbacks_list)
 
 # Unfreeze
 mnet.trainable = True
 for layer in mnet.layers[:-30]:
     layer.trainable = False
 
-model.compile(loss="sparse_categorical_crossentropy",
+model.compile(loss="binary_crossentropy",
               optimizer=tf.keras.optimizers.Adam(0.00001),
               metrics=["accuracy"])
 
 print("Phase 2 - Unfreeze (5 epochs)")
-hist2 = model.fit(train, epochs=5, validation_data=val, class_weight=class_weight, callbacks=callbacks_list)
+hist2 = model.fit(train_ds, epochs=5, validation_data=val_ds, class_weight=class_weight, callbacks=callbacks_list)
 
 
 # Graphs

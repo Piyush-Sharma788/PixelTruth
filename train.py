@@ -1,49 +1,60 @@
 from tensorflow.keras.applications.mobilenet_v2 import MobileNetV2
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dropout, Dense, BatchNormalization, GlobalAveragePooling2D
+from tensorflow.keras.layers import Dropout, Dense, BatchNormalization, GlobalAveragePooling2D, Rescaling, RandomFlip
 import tensorflow as tf
 import matplotlib.pyplot as plt
-from tensorflow.keras.preprocessing.image import ImageDataGenerator
+
 
 
 dataset_path = "real_and_fake_face_detection/real_vs_fake/real-vs-fake/train"
 
-train_datagen = ImageDataGenerator(
-    rescale=1./255,
-    horizontal_flip=True,
-    validation_split=0.2
+# Load dataset using TensorFlow data pipeline
+train_ds = tf.keras.utils.image_dataset_from_directory(
+    dataset_path,
+    validation_split=0.2,
+    subset="training",
+    seed=123,
+    image_size=(96, 96),
+    batch_size=128,
+    label_mode="binary"
 )
 
-val_datagen = ImageDataGenerator(
-    rescale=1./255,
-    validation_split=0.2
+val_ds = tf.keras.utils.image_dataset_from_directory(
+    dataset_path,
+    validation_split=0.2,
+    subset="validation",
+    seed=123,
+    image_size=(96, 96),
+    batch_size=128,
+    label_mode="binary"
 )
 
-train = train_datagen.flow_from_directory(dataset_path,
-                                          class_mode="binary",
-                                          target_size=(96, 96),
-                                          batch_size=128,
-                                          subset="training")
+AUTOTUNE = tf.data.AUTOTUNE
 
-val = val_datagen.flow_from_directory(dataset_path,
-                                          class_mode="binary",
-                                          target_size=(96, 96),
-                                          batch_size=128,
-                                          subset="validation")
+# Improve pipeline performance with shuffle, cache and prefetch
+train_ds = train_ds.shuffle(buffer_size=1000).cache().prefetch(buffer_size=AUTOTUNE)
+val_ds = val_ds.cache().prefetch(buffer_size=AUTOTUNE)
+
 
 mnet = MobileNetV2(include_top=False, weights="imagenet", input_shape=(96, 96, 3))
 
-model = Sequential([mnet,
-                    GlobalAveragePooling2D(),
-                    Dense(512, activation="relu"),
-                    BatchNormalization(),
-                    Dropout(0.3),
-                    Dense(128, activation="relu"),
-                    Dropout(0.1),
-                    Dense(2, activation="softmax")])
+model = Sequential([
+    RandomFlip("horizontal"),
+    Rescaling(1./255),
+    mnet,
+    GlobalAveragePooling2D(),
+    Dense(512, activation="relu"),
+    BatchNormalization(),
+    Dropout(0.3),
+    Dense(128, activation="relu"),
+    Dropout(0.1),
+    Dense(1, activation="sigmoid")
+    ])
 
-model.layers[0].trainable = False
-model.compile(loss="sparse_categorical_crossentropy", optimizer="adam", metrics=["accuracy"])
+mnet.trainable = False
+model.compile(loss="binary_crossentropy",
+               optimizer="adam",
+               metrics=["accuracy"])
 model.summary()
 
 def scheduler(epoch):
@@ -54,10 +65,12 @@ def scheduler(epoch):
 
 lr_callbacks = tf.keras.callbacks.LearningRateScheduler(scheduler)
 
-hist = model.fit(train,
-                 epochs=10,
-                 callbacks=[lr_callbacks],
-                 validation_data=val)
+hist = model.fit(
+    train_ds,
+    epochs=10,
+    callbacks=[lr_callbacks],
+    validation_data=val_ds
+)
 
 model.save('deepfake_detection_model.h5')
 print("✅ Model saved!")
@@ -88,4 +101,4 @@ plt.title('Train Accuracy vs Validation Accuracy')
 plt.grid(True)
 plt.legend(['Train', 'Validation'], loc=4)
 plt.savefig('Figure_2.png')
-print(" Graphs saved!")
+print("Graphs saved!")
