@@ -452,4 +452,246 @@ with col_right:
 
             st.markdown("</div>", unsafe_allow_html=True)
 
+            # ---------------- Explanation Message ----------------
+            if is_uncertain:
+
+                st.warning(
+                    f"The model's confidence is only {confidence * 100:.1f}% — "
+                    "this prediction is borderline and should not be treated as "
+                    "a definitive verdict. Consider using a higher-quality or "
+                    "less ambiguous image for a more reliable result."
+                )
+
+            elif label == "Fake":
+
+                st.error(
+                    "The model detected patterns consistent with "
+                    "deepfake artifacts, such as irregular blending, "
+                    "lighting mismatches, or unusual facial textures."
+                )
+
+            else:
+
+                st.success(
+                    "The model did not detect strong deepfake indicators. "
+                    "The image appears consistent with natural, "
+                    "unaltered content."
+                )
+
+            # ---------------- Grad-CAM Visualization ----------------
+            st.markdown("<br>", unsafe_allow_html=True)
+
+            st.subheader("🧠 Model Explainability (Grad-CAM)")
+
+            col_gc1, col_gc2 = st.columns(2)
+
+            with col_gc1:
+
+                st.image(
+                    image,
+                    channels="BGR",
+                    caption="Original Image",
+                    use_column_width=True
+                )
+
+            with col_gc2:
+
+                if gradcam_image is not None:
+
+                    st.image(
+                        gradcam_image,
+                        channels="BGR",
+                        caption="Grad-CAM Heatmap",
+                        use_column_width=True
+                    )
+
+                else:
+
+                    st.info(
+                        "Grad-CAM visualization unavailable for this model."
+                    )
+
+            st.caption(
+                "Highlighted regions represent areas the model focused on "
+                "during prediction."
+            )
     st.markdown("</div>", unsafe_allow_html=True)
+
+
+# ----------------------- MODEL PERFORMANCE -----------------
+
+st.markdown("<br>", unsafe_allow_html=True)
+
+st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
+
+st.subheader("📉 Training Performance")
+
+col_perf1, col_perf2 = st.columns(2)
+
+with col_perf1:
+
+    st.markdown("**Training Accuracy Curve**")
+
+    if os.path.exists("Figure_2.png"):
+
+        st.image("Figure_2.png", use_container_width=True)
+    else:
+
+        st.info("Figure_2.png not found.")
+
+
+with col_perf2:
+
+    st.markdown("**Training Loss Curve**")
+
+    if os.path.exists("Figure_1.png"):
+
+        st.image("Figure_1.png", use_container_width=True)
+
+    else:
+
+        st.info("Figure_1.png not found.")
+
+st.markdown("</div>", unsafe_allow_html=True)
+
+# ----------------------- MODEL ANALYTICS ------------------
+st.divider()
+st.markdown("<br>", unsafe_allow_html=True)
+st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
+st.markdown("### 📊 Model Analytics Dashboard")
+st.caption("Comprehensive performance metrics and visualizations of the deepfake detection model")
+
+# Fetch metrics
+metrics = get_sample_metrics()
+class_stats = get_class_statistics()
+
+# -------- SECTION 1: PERFORMANCE METRICS --------
+st.markdown("#### 📈 Performance Metrics")
+col_acc, col_prec, col_rec, col_f1 = st.columns(4)
+
+with col_acc:
+    st.metric(
+        label="Accuracy",
+        value=f"{metrics['accuracy']:.1f}%",
+        help="Overall correctness: (TP + TN) / Total"
+    )
+
+with col_prec:
+    st.metric(
+        label="Precision",
+        value=f"{metrics['precision']:.1f}%",
+        help="Positive accuracy: TP / (TP + FP)"
+    )
+
+with col_rec:
+    st.metric(
+        label="Recall",
+        value=f"{metrics['recall']:.1f}%",
+        help="True positive rate: TP / (TP + FN)"
+    )
+
+with col_f1:
+    st.metric(
+        label="F1-Score",
+        value=f"{metrics['f1_score']:.1f}%",
+        help="Harmonic mean of precision & recall"
+    )
+
+st.markdown("<br>", unsafe_allow_html=True)
+st.divider()
+
+# -------- SECTION 2: CONFUSION MATRIX & ROC CURVE --------
+st.markdown("#### 🎯 Classification Analysis")
+col_cm, col_roc = st.columns(2)
+
+with col_cm:
+    st.plotly_chart(get_confusion_matrix_plot(), use_container_width=True, config={'scrollZoom': True, 'displayModeBar': True})
+    st.caption(get_confusion_matrix_caption())
+
+with col_roc:
+    st.plotly_chart(get_roc_curve_plot(), use_container_width=True, config={'scrollZoom': True, 'displayModeBar': True})
+    st.caption(get_roc_curve_caption())
+
+st.markdown("<br>", unsafe_allow_html=True)
+st.divider()
+
+# -------- SECTION 3: DATASET DISTRIBUTION & CLASS STATS --------
+st.markdown("#### 📊 Data & Class-Level Insights")
+col_dist, col_stats = st.columns(2)
+
+with col_dist:
+    st.plotly_chart(get_dataset_distribution_plot(), use_container_width=True, config={'scrollZoom': True, 'displayModeBar': True})
+    st.caption(get_dataset_distribution_caption())
+
+with col_stats:
+    st.markdown("**Per-Class Performance**")
+    st.caption("Accuracy breakdown by image category")
+    
+    for idx, (class_label, stats) in enumerate(class_stats.items()):
+        if idx > 0:
+            st.divider()
+        
+        # Class header with icon
+        icon = "🟢" if class_label == "Real" else "🔴"
+        st.markdown(f"#### {icon} {class_label} Images")
+        
+        # Metrics in 3 columns
+        col_s1, col_s2, col_s3 = st.columns(3)
+        
+        with col_s1:
+            st.metric(
+                label="Total Samples",
+                value=f"{stats['total_samples']:,}"
+            )
+        
+        with col_s2:
+            st.metric(
+                label="Correct Predictions",
+                value=f"{stats['correctly_classified']:,}"
+            )
+        
+        with col_s3:
+            st.metric(
+                label="Accuracy",
+                value=f"{stats['class_accuracy']:.1f}%"
+            )
+
+st.markdown("</div>", unsafe_allow_html=True)
+
+# ----------------------- PREDICTION HISTORY ---------------
+st.markdown("<br>", unsafe_allow_html=True)
+st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
+st.subheader("🕒 Prediction History")
+
+if "prediction_history" not in st.session_state or len(st.session_state.prediction_history) == 0:
+    st.info("No predictions yet. Upload an image above to get started.")
+else:
+    df = pd.DataFrame(st.session_state.prediction_history)
+    st.dataframe(df, use_container_width=True)
+
+    csv = df.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        label="⬇️ Download Report as CSV",
+        data=csv,
+        file_name="pixeltruth_report.csv",
+        mime="text/csv"
+    )
+
+    if st.button("🗑️ Clear History"):
+        st.session_state.prediction_history = []
+        st.rerun()
+
+st.markdown("</div>", unsafe_allow_html=True)
+
+# ----------------------- FOOTER ----------------------------
+
+st.markdown(
+    '''
+<div style="text-align:center; margin-top:3rem; color:#6b7280; font-size:0.8rem;">
+  <hr style="border-color:rgba(75,85,99,0.6);" />
+  <p>🕵️ PixelTruth • Built with Streamlit & TensorFlow</p>
+</div>
+''',
+    unsafe_allow_html=True,
+)
+>>>>>>> 3004ee2 (Remove TensorFlow import from preprocessing)
