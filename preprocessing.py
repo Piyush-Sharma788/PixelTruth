@@ -43,6 +43,10 @@ def get_image_metadata(image: np.ndarray) -> dict:
     channels = image.shape[2] if image.ndim == 3 else 1
     return {"height": h, "width": w, "channels": channels}
 
+def batch_preprocess(images: list[np.ndarray]) -> np.ndarray:
+    if not images:
+        raise ValueError("Received an empty list.")
+    return np.concatenate([preprocess_image_array(img) for img in images], axis=0)
 
 @lru_cache(maxsize=32)
 def decode_image_bytes(image_bytes: bytes) -> np.ndarray:
