@@ -1,9 +1,8 @@
 import os
-import numpy as np
 import pandas as pd
 from datetime import datetime
 import streamlit as st
-from preprocessing import decode_image_bytes, preprocess_image_bytes
+from preprocessing import decode_image_bytes
 import logging
 
 from gradcam import make_gradcam_heatmap, overlay_heatmap
@@ -14,8 +13,6 @@ from exceptions import (
 )
 
 from inference import (
-    preprocess_image,
-    preprocess_uploaded_image as _preprocess_uploaded_image,
     predict_image as _predict_image,
     find_last_conv_layer,
 )
@@ -140,18 +137,6 @@ except Exception as e:
 
 # ----------------------- IMAGE PIPELINE --------------------
 
-preprocess_uploaded_image = _preprocess_uploaded_image
-
-try:
-
-    preprocess_uploaded_image.cache_clear = preprocess_image_bytes.cache_clear
-    preprocess_uploaded_image.cache_info = preprocess_image_bytes.cache_info
-
-except Exception:
-    pass
-
-_ = preprocess_image
-
 
 def predict_image(image):
 
@@ -232,8 +217,6 @@ with col_left:
     MAX_FILE_SIZE_MB = 10
     MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 
-    uploaded_image_bytes = None
-
     if uploaded_file is not None:
 
         if uploaded_file.size > MAX_FILE_SIZE_BYTES:
@@ -250,8 +233,6 @@ with col_left:
             try:
 
                 raw_bytes = uploaded_file.read()
-
-                uploaded_image_bytes = raw_bytes
 
                 uploaded_file.seek(0)
 
@@ -309,31 +290,7 @@ with col_right:
         with st.spinner("Analyzing image with the deepfake model..."):
 
             try:
-
-                if uploaded_image_bytes is not None:
-
-                    processed_image = preprocess_uploaded_image(
-                        uploaded_image_bytes
-                    )
-
-                    prediction = model.predict(
-                        processed_image,
-                        verbose=0
-                    )
-
-                    class_label = np.argmax(prediction, axis=1)[0]
-
-                    confidence = float(np.max(prediction))
-
-                    label = (
-                        "Real"
-                        if class_label == 0
-                        else "Fake"
-                    )
-
-                else:
-
-                    label, confidence, processed_image = predict_image(image)
+                label, confidence, processed_image = predict_image(image)
 
             except PreprocessingError as e:
 

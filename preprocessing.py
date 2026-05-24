@@ -1,14 +1,18 @@
 from functools import lru_cache
+from pathlib import Path
 
 import cv2
 import numpy as np
-from pathlib import Path
 
 from config import IMAGE_SIZE
 
 MIN_IMAGE_DIM = 10
 
+
 def validate_image_dimensions(image: np.ndarray) -> None:
+    if not isinstance(image, np.ndarray) or image.ndim not in (2, 3):
+        raise ValueError("Image must be a two- or three-dimensional numpy array.")
+
     h, w = image.shape[:2]
     if h < MIN_IMAGE_DIM or w < MIN_IMAGE_DIM:
         raise ValueError(
@@ -19,13 +23,21 @@ def validate_image_dimensions(image: np.ndarray) -> None:
 
 def preprocess_image_array(image: np.ndarray) -> np.ndarray:
     validate_image_dimensions(image)
-if image.ndim == 2 or image.shape[2] == 1:
-    image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
-else:
-    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)    image = cv2.resize(image, TARGET_IMAGE_SIZE)
+
+    if image.ndim == 2:
+        image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
+    elif image.shape[2] == 1:
+        image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
+    elif image.shape[2] == 3:
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    elif image.shape[2] == 4:
+        image = cv2.cvtColor(image, cv2.COLOR_BGRA2RGB)
+    else:
+        raise ValueError(f"Unsupported image channel count: {image.shape[2]}.")
+
+    image = cv2.resize(image, IMAGE_SIZE)
     image = image.astype("float32")
     image = np.expand_dims(image, axis=0)
-    image = image / 255.0
     return image
 
 
@@ -40,15 +52,18 @@ def preprocess_image_from_path(image_path: str | Path) -> np.ndarray:
     
     return preprocess_image_array(image)
 
+
 def get_image_metadata(image: np.ndarray) -> dict:
     h, w = image.shape[:2]
     channels = image.shape[2] if image.ndim == 3 else 1
     return {"height": h, "width": w, "channels": channels}
 
+
 def batch_preprocess(images: list[np.ndarray]) -> np.ndarray:
     if not images:
         raise ValueError("Received an empty list.")
     return np.concatenate([preprocess_image_array(img) for img in images], axis=0)
+
 
 @lru_cache(maxsize=32)
 def decode_image_bytes(image_bytes: bytes) -> np.ndarray:
@@ -72,3 +87,4 @@ def decode_image_bytes(image_bytes: bytes) -> np.ndarray:
 def preprocess_image_bytes(image_bytes: bytes) -> np.ndarray:
     """Decode *and* preprocess raw image bytes in one shot."""
     return preprocess_image_array(decode_image_bytes(image_bytes))
+

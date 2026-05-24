@@ -15,6 +15,26 @@ from model_utils import ensure_model_file, get_model_path, get_model_url, get_mo
 from exceptions import PreprocessingError, ModelExecutionError
 
 
+def decode_prediction(prediction: np.ndarray) -> Tuple[str, float]:
+    """Decode output using the training directory label order: fake, then real."""
+    scores = np.asarray(prediction, dtype=float).reshape(-1)
+    if scores.size == 1:
+        real_probability = float(scores[0])
+        if not 0.0 <= real_probability <= 1.0:
+            raise ModelExecutionError("Model returned a probability outside [0, 1].")
+        if real_probability >= 0.5:
+            return "Real", real_probability
+        return "Fake", 1.0 - real_probability
+
+    if scores.size == 2:
+        class_label = int(np.argmax(scores))
+        return ("Real" if class_label == 1 else "Fake"), float(scores[class_label])
+
+    raise ModelExecutionError(
+        f"Unsupported model output shape: {np.asarray(prediction).shape}."
+    )
+
+
 def preprocess_image(image: np.ndarray) -> np.ndarray:
     if image is None:
         raise ValueError("image must be a numpy array")
@@ -96,9 +116,9 @@ def predict_image(model, image: np.ndarray) -> Tuple[Optional[str], Optional[flo
 
     try:
         prediction = model.predict(processed, verbose=0)
-        class_label = int(np.argmax(prediction, axis=1)[0])
-        confidence = float(np.max(prediction))
-        label = "Real" if class_label == 0 else "Fake"
+        label, confidence = decode_prediction(prediction)
         return label, confidence, processed
+    except ModelExecutionError:
+        raise
     except Exception as exc:
         raise ModelExecutionError(f"Model prediction failed: {exc}") from exc

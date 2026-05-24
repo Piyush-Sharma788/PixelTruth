@@ -1,6 +1,5 @@
 import logging
 from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 # Import our unified predict pipeline
@@ -29,7 +28,7 @@ async def detect_image(file: UploadFile = File(...)):
     """
     Accepts an uploaded image file and returns deepfake detection results.
     """
-    if not file.content_type.startswith("image/"):
+    if not file.content_type or not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="Uploaded file must be an image.")
 
     try:
