@@ -135,9 +135,6 @@ except Exception as e:
     model = None
 
 
-# ----------------------- IMAGE PIPELINE --------------------
-
-
 def predict_image(image):
 
     return _predict_image(model, image)
@@ -290,6 +287,7 @@ with col_right:
         with st.spinner("Analyzing image with the deepfake model..."):
 
             try:
+
                 label, confidence, processed_image = predict_image(image)
 
             except PreprocessingError as e:

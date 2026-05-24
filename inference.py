@@ -16,12 +16,13 @@ from exceptions import PreprocessingError, ModelExecutionError
 
 
 def decode_prediction(prediction: np.ndarray) -> Tuple[str, float]:
-    """Decode output using the training directory label order: fake, then real."""
+    """Convert sigmoid or two-class softmax output to a label and confidence."""
     scores = np.asarray(prediction, dtype=float).reshape(-1)
     if scores.size == 1:
         real_probability = float(scores[0])
         if not 0.0 <= real_probability <= 1.0:
             raise ModelExecutionError("Model returned a probability outside [0, 1].")
+        # Training directories are alphabetic: class 0 = fake, class 1 = real.
         if real_probability >= 0.5:
             return "Real", real_probability
         return "Fake", 1.0 - real_probability

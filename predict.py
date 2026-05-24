@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 def preprocess_image(image_input: str | Path | bytes | np.ndarray) -> np.ndarray:
-    """Return a resized RGB batch; model layers perform numeric scaling."""
+    """Return an RGB normalized batch for a path, raw bytes, or BGR array."""
     if isinstance(image_input, (str, Path)):
         image_path = Path(image_input)
         if not image_path.exists():
@@ -35,8 +35,10 @@ def preprocess_image(image_input: str | Path | bytes | np.ndarray) -> np.ndarray
     try:
         if isinstance(image_input, bytes):
             return preprocess_image_bytes(image_input)
+
         if isinstance(image_input, np.ndarray):
             return preprocess_image_array(image_input)
+
         raise TypeError("image_input must be a file path, raw bytes, or numpy array.")
     except TypeError:
         raise
@@ -48,12 +50,13 @@ def preprocess_image(image_input: str | Path | bytes | np.ndarray) -> np.ndarray
 
 
 def decode_prediction(prediction: np.ndarray) -> tuple[str, float, list[float]]:
-    """Decode output using the training directory label order: fake, then real."""
+    """Convert sigmoid or two-class softmax output to a label and confidence."""
     scores = np.asarray(prediction, dtype=float).reshape(-1)
     if scores.size == 1:
         real_probability = float(scores[0])
         if not 0.0 <= real_probability <= 1.0:
             raise ModelExecutionError("Model returned a probability outside [0, 1].")
+        # Training directories are alphabetic: class 0 = fake, class 1 = real.
         if real_probability >= 0.5:
             return "Real", real_probability, scores.tolist()
         return "Fake", 1.0 - real_probability, scores.tolist()
@@ -72,7 +75,7 @@ def predict_image(
     image_input: str | Path | bytes | np.ndarray,
     model_path: str | None = None,
 ) -> dict:
-    """Run deepfake detection and return label, confidence, and raw scores."""
+    """Run deepfake detection and return a normalized result dictionary."""
     source_path = str(image_input) if isinstance(image_input, (str, Path)) else None
     processed = preprocess_image(image_input)
 
@@ -112,7 +115,12 @@ def build_parser() -> argparse.ArgumentParser:
         description="PixelTruth deepfake image detector.",
     )
     parser.add_argument("images", metavar="IMAGE", nargs="+", help="image path(s)")
-    parser.add_argument("--model", metavar="PATH", default=None)
+    parser.add_argument(
+        "--model",
+        metavar="PATH",
+        default=None,
+        help="path to the Keras model file",
+    )
     parser.add_argument("--json", dest="output_json", action="store_true")
     parser.add_argument("--quiet", action="store_true")
     return parser
@@ -122,6 +130,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     results = []
     exit_code = 0
+
     for image_path in args.images:
         try:
             results.append(predict_image(image_path, model_path=args.model))
@@ -142,7 +151,11 @@ def main(argv: list[str] | None = None) -> int:
             {key: value for key, value in result.items() if key != "processed_image"}
             for result in results
         ]
-        output = serializable_results if len(results) > 1 else serializable_results[0]
+        output = (
+            serializable_results
+            if len(serializable_results) > 1
+            else serializable_results[0]
+        )
         print(json.dumps(output, indent=2))
     else:
         for result in results:

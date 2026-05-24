@@ -38,6 +38,7 @@ def preprocess_image_array(image: np.ndarray) -> np.ndarray:
     image = cv2.resize(image, IMAGE_SIZE)
     image = image.astype("float32")
     image = np.expand_dims(image, axis=0)
+    image = image / 255.0
     return image
 
 
@@ -87,4 +88,3 @@ def decode_image_bytes(image_bytes: bytes) -> np.ndarray:
 def preprocess_image_bytes(image_bytes: bytes) -> np.ndarray:
     """Decode *and* preprocess raw image bytes in one shot."""
     return preprocess_image_array(decode_image_bytes(image_bytes))
-
