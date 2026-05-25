@@ -1,14 +1,13 @@
-from functools import lru_cache
+from PIL import Image, ImageOps
+from io import BytesIO
 
 import io
 import os
-from functools import lru_cache
-from pathlib import Path
 
 import cv2
 import numpy as np
 from pathlib import Path
-from PIL import Image
+from functools import lru_cache
 
 from config import IMAGE_SIZE
 
@@ -105,10 +104,10 @@ def batch_preprocess(images: list[np.ndarray]) -> np.ndarray:
     if not images:
         raise ValueError("Received an empty list.")
     return np.concatenate([preprocess_image_array(img) for img in images], axis=0)
-
+  
 @lru_cache(maxsize=32)
 def decode_image_bytes(image_bytes: bytes) -> np.ndarray:
-    """Decode raw bytes into a BGR numpy array.
+    """Decode raw bytes into a correctly oriented BGR numpy array.
 
     Raises
     ------
@@ -117,16 +116,30 @@ def decode_image_bytes(image_bytes: bytes) -> np.ndarray:
         image's declared dimensions exceed the configured pixel cap
         (PIXELTRUTH_MAX_PIXELS env var, default 25 megapixels).
     """
+
     _validate_compressed_image_dimensions(image_bytes)
-    
-    file_array = np.asarray(bytearray(image_bytes), dtype=np.uint8)
-    image = cv2.imdecode(file_array, cv2.IMREAD_COLOR)
-    if image is None:
+
+    try:
+        pil_image = Image.open(BytesIO(image_bytes))
+
+        # Normalize EXIF orientation metadata
+        pil_image = ImageOps.exif_transpose(pil_image)
+
+        # Ensure RGB format
+        pil_image = pil_image.convert("RGB")
+
+        # Convert PIL -> NumPy
+        image = np.array(pil_image)
+
+        # Convert RGB -> BGR for OpenCV compatibility
+        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+
+        return image
+
+    except Exception as exc:
         raise ValueError(
             "The uploaded file appears to be corrupted or is not a valid image."
-        )
-    return image
-
+        ) from exc
 
 @lru_cache(maxsize=32)
 def preprocess_image_bytes(image_bytes: bytes) -> np.ndarray:
