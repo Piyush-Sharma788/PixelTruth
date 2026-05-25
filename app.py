@@ -219,6 +219,30 @@ with col_info_right:
 
     st.markdown("</div>", unsafe_allow_html=True)
 
+# ----------------------- TRAINING PERFORMANCE PLOTS --------
+
+st.markdown("<br>", unsafe_allow_html=True)
+
+st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
+
+st.subheader("📈 Training Performance")
+
+col_plot1, col_plot2 = st.columns(2)
+
+with col_plot1:
+    if os.path.exists("Figure_1.png"):
+        st.image("Figure_1.png", use_column_width=True, caption="Training History")
+    else:
+        st.warning("Missing image: Figure_1.png")
+
+with col_plot2:
+    if os.path.exists("Figure_2.png"):
+        st.image("Figure_2.png", use_column_width=True, caption="Evaluation Metrics")
+    else:
+        st.warning("Missing image: Figure_2.png")
+
+st.markdown("</div>", unsafe_allow_html=True)
+
 # ----------------------- DETECTION SECTION -----------------
 
 st.markdown("<br>", unsafe_allow_html=True)
