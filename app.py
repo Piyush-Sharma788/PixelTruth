@@ -31,7 +31,7 @@ from metrics import (
     get_dataset_distribution_caption,
 )
 
-from utils.model_loader import load_cached_model
+from utils.model_loader import load_cached_model, get_model_mtime
 
 logging.basicConfig(
     level=logging.INFO,
@@ -132,7 +132,7 @@ try:
 
     with st.spinner("Loading AI model..."):
 
-        model = load_cached_model()
+        model = load_cached_model(get_model_mtime())
 
     st.success("Model initialized successfully.")
 

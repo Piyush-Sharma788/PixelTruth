@@ -1,4 +1,6 @@
 import logging
+import os
+import tempfile
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -35,18 +37,31 @@ async def detect_image(file: UploadFile = File(...)):
         # Read raw image bytes
         image_bytes = await file.read()
         
-        # Use our unified prediction pipeline
-        result = predict_image(image_bytes)
+        # Get extension to ensure supported format
+        ext = os.path.splitext(file.filename)[1].lower() if file.filename else ".jpg"
         
-        return {
-            "verdict": result["label"],
-            "confidence": result["confidence"],
-            "raw_scores": result["raw"]
-        }
+        # Create a temporary file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+            tmp.write(image_bytes)
+            tmp_path = tmp.name
+            
+        try:
+            # Pass the temp file path instead of bytes
+            result = predict_image(tmp_path)
+            
+            return {
+                "verdict": result["label"],
+                "confidence": result["confidence"],
+                "raw_scores": result["raw"]
+            }
+        finally:
+            # Ensure the temp file is cleaned up
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
         
     except PreprocessingError as e:
         logger.error(f"Preprocessing error: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e))
     except ModelExecutionError as e:
         logger.error(f"Model error: {e}")
         raise HTTPException(status_code=500, detail="Internal server error during model execution.")

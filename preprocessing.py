@@ -87,7 +87,6 @@ def preprocess_image_array(image: np.ndarray) -> np.ndarray:
         image = cv2.cvtColor(image, cv2.COLOR_BGRA2RGB)
     else:
         raise ValueError(f"Unsupported image channel count: {image.shape[2]}.")
-
     image = cv2.resize(image, IMAGE_SIZE)
     image = image.astype("float32")
     image = np.expand_dims(image, axis=0)
