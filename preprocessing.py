@@ -83,21 +83,12 @@ def preprocess_image_array(image: np.ndarray) -> np.ndarray:
         image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
     elif image.shape[2] == 3:
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-<<<<<<< HEAD
-    elif image.shape[2] == 4:
-        image = cv2.cvtColor(image, cv2.COLOR_BGRA2RGB)
     elif image.shape[2] == 4:
         image = cv2.cvtColor(image, cv2.COLOR_BGRA2RGB)
     else:
         raise ValueError(f"Unsupported image channel count: {image.shape[2]}.")
-    else:
-    image = cv2.resize(image, IMAGE_SIZE)
 
     image = cv2.resize(image, IMAGE_SIZE)
-=======
-   
-    image = cv2.resize(image, TARGET_IMAGE_SIZE)
->>>>>>> upstream/main
     image = image.astype("float32")
     image = np.expand_dims(image, axis=0)
     return image
@@ -107,11 +98,11 @@ def preprocess_image_from_path(image_path: str | Path) -> np.ndarray:
     path = Path(image_path)
     if not path.exists():
         raise FileNotFoundError(f"No file found at: {path}")
-    
+
     image = cv2.imread(str(path), cv2.IMREAD_COLOR)
     if image is None:
         raise ValueError(f"Could not decode image at '{path}'.")
-    
+
     return preprocess_image_array(image)
 
 
@@ -125,9 +116,19 @@ def batch_preprocess(images: list[np.ndarray]) -> np.ndarray:
     if not images:
         raise ValueError("Received an empty list.")
     return np.concatenate([preprocess_image_array(img) for img in images], axis=0)
-<<<<<<< HEAD
 
+
+@lru_cache(maxsize=32)
 def decode_image_bytes(image_bytes: bytes) -> np.ndarray:
+    """Decode raw bytes into a correctly oriented BGR numpy array.
+
+    Raises
+    ------
+    ValueError
+        When the bytes cannot be decoded into a valid image, or when the
+        image's declared dimensions exceed the configured pixel cap
+        (PIXELTRUTH_MAX_PIXELS env var, default 25 megapixels).
+    """
     _validate_compressed_image_dimensions(image_bytes)
 
     try:
@@ -151,35 +152,7 @@ def decode_image_bytes(image_bytes: bytes) -> np.ndarray:
         raise ValueError(
             "The uploaded file appears to be corrupted or is not a valid image."
         ) from exc
-    image = cv2.imdecode(file_array, cv2.IMREAD_COLOR)
-    if image is None:
-        raise PreprocessingError(
-=======
 
-    _validate_compressed_image_dimensions(image_bytes)
-
-    try:
-        pil_image = Image.open(BytesIO(image_bytes))
-
-        # Normalize EXIF orientation metadata
-        pil_image = ImageOps.exif_transpose(pil_image)
-
-        # Ensure RGB format
-        pil_image = pil_image.convert("RGB")
-
-        # Convert PIL -> NumPy
-        image = np.array(pil_image)
-
-        # Convert RGB -> BGR for OpenCV compatibility
-        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-
-        return image
-
-    except Exception as exc:
-        raise ValueError(
->>>>>>> upstream/main
-            "The uploaded file appears to be corrupted or is not a valid image."
-        ) from exc
 
 @lru_cache(maxsize=32)
 def preprocess_image_bytes(image_bytes: bytes) -> np.ndarray:
