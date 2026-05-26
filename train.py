@@ -5,38 +5,36 @@ import tensorflow as tf
 import matplotlib.pyplot as plt
 
 
+DATASET_PATH = "real_and_fake_face_detection/real_vs_fake/real-vs-fake/train"
+IMAGE_SIZE = (96, 96)
+BATCH_SIZE = 128
+EPOCHS = 10
+VALIDATION_SPLIT = 0.2
 
-dataset_path = "real_and_fake_face_detection/real_vs_fake/real-vs-fake/train"
-
-# Load dataset using TensorFlow data pipeline
-train_ds = tf.keras.utils.image_dataset_from_directory(
-    dataset_path,
-    validation_split=0.2,
-    subset="training",
-    seed=123,
-    image_size=(96, 96),
-    batch_size=128,
-    label_mode="binary"
+train_datagen = ImageDataGenerator(
+    rescale=1./255,
+    horizontal_flip=True,
+    validation_split=VALIDATION_SPLIT
 )
 
-val_ds = tf.keras.utils.image_dataset_from_directory(
-    dataset_path,
-    validation_split=0.2,
-    subset="validation",
-    seed=123,
-    image_size=(96, 96),
-    batch_size=128,
-    label_mode="binary"
+val_datagen = ImageDataGenerator(
+    rescale=1./255,
+    validation_split=VALIDATION_SPLIT
 )
 
-AUTOTUNE = tf.data.AUTOTUNE
+train = train_datagen.flow_from_directory(DATASET_PATH,
+                                          class_mode="binary",
+                                          target_size=IMAGE_SIZE,
+                                          batch_size=BATCH_SIZE,
+                                          subset="training")
 
-# Improve pipeline performance with shuffle, cache and prefetch
-train_ds = train_ds.shuffle(buffer_size=1000).cache().prefetch(buffer_size=AUTOTUNE)
-val_ds = val_ds.cache().prefetch(buffer_size=AUTOTUNE)
+val = val_datagen.flow_from_directory(DATASET_PATH,
+                                      class_mode="binary",
+                                      target_size=IMAGE_SIZE,
+                                      batch_size=BATCH_SIZE,
+                                      subset="validation")
 
-
-mnet = MobileNetV2(include_top=False, weights="imagenet", input_shape=(96, 96, 3))
+mnet = MobileNetV2(include_top=False, weights="imagenet", input_shape=(IMAGE_SIZE[0], IMAGE_SIZE[1], 3))
 
 model = Sequential([
     RandomFlip("horizontal"),
@@ -65,22 +63,19 @@ def scheduler(epoch):
 
 lr_callbacks = tf.keras.callbacks.LearningRateScheduler(scheduler)
 
-hist = model.fit(
-    train_ds,
-    epochs=10,
-    callbacks=[lr_callbacks],
-    validation_data=val_ds
-)
+hist = model.fit(train,
+                 epochs=EPOCHS,
+                 callbacks=[lr_callbacks],
+                 validation_data=val)
 
 model.save('deepfake_detection_model.h5')
 print("✅ Model saved!")
 
-epochs = 10
 train_loss = hist.history['loss']
 val_loss = hist.history['val_loss']
 train_acc = hist.history['accuracy']
 val_acc = hist.history['val_accuracy']
-xc = range(epochs)
+xc = range(EPOCHS)
 
 plt.figure(1, figsize=(7, 5))
 plt.plot(xc, train_loss)

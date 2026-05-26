@@ -136,7 +136,6 @@ except Exception as e:
 
 
 def predict_image(image):
-
     return _predict_image(model, image)
 
 
@@ -156,7 +155,7 @@ if os.path.exists("coverpage.png"):
 
     st.image(
         "coverpage.png",
-        use_container_width=True
+        use_column_width=True
     )
 
 # ----------------------- TOP INFO SECTION ------------------
@@ -190,6 +189,30 @@ with col_info_right:
     st.metric("Task", "Binary classification (Real / Fake)")
 
     st.markdown("</div>", unsafe_allow_html=True)
+
+# ----------------------- TRAINING PERFORMANCE PLOTS --------
+
+st.markdown("<br>", unsafe_allow_html=True)
+
+st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
+
+st.subheader("📈 Training Performance")
+
+col_plot1, col_plot2 = st.columns(2)
+
+with col_plot1:
+    if os.path.exists("Figure_1.png"):
+        st.image("Figure_1.png", use_column_width=True, caption="Training History")
+    else:
+        st.warning("Missing image: Figure_1.png")
+
+with col_plot2:
+    if os.path.exists("Figure_2.png"):
+        st.image("Figure_2.png", use_column_width=True, caption="Evaluation Metrics")
+    else:
+        st.warning("Missing image: Figure_2.png")
+
+st.markdown("</div>", unsafe_allow_html=True)
 
 # ----------------------- DETECTION SECTION -----------------
 
@@ -286,6 +309,165 @@ with col_right:
 
         with st.spinner("Analyzing image with the deepfake model..."):
 
+=======
+
+    return _predict_image(model, image)
+
+
+# ----------------------- HEADER / HERO ---------------------
+
+st.markdown(
+    "<h1 class='main-title'>DEEPFAKE SENTINEL</h1>",
+    unsafe_allow_html=True
+)
+
+st.markdown(
+    "<p class='sub-title'>AI-powered detection of manipulated social media images.</p>",
+    unsafe_allow_html=True,
+)
+
+if os.path.exists("coverpage.png"):
+
+    st.image(
+        "coverpage.png",
+        use_column_width=True
+    )
+
+# ----------------------- TOP INFO SECTION ------------------
+
+col_info_left, col_info_right = st.columns([2, 1])
+
+with col_info_left:
+
+    st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
+
+    st.subheader("🧠 Understanding Deepfakes")
+
+    st.markdown(
+        """
+- Deepfakes are AI-generated images or videos where one person's face or identity is swapped with another.
+- They can be used in entertainment and education, but also for misinformation, fraud, and privacy attacks.
+- Detection models focus on subtle artifacts in lighting, edges, blending, and facial structure that humans often miss.
+        """
+    )
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+with col_info_right:
+
+    st.markdown("<div class='glass-card metric-small'>", unsafe_allow_html=True)
+
+    st.subheader("📈 Model Snapshot")
+
+    st.metric("Training Accuracy", "95%")
+    st.metric("Input Size", "96 × 96 pixels")
+    st.metric("Task", "Binary classification (Real / Fake)")
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+# ----------------------- TRAINING PERFORMANCE PLOTS --------
+
+st.markdown("<br>", unsafe_allow_html=True)
+
+st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
+
+st.subheader("📈 Training Performance")
+
+col_plot1, col_plot2 = st.columns(2)
+
+with col_plot1:
+    if os.path.exists("Figure_1.png"):
+        st.image("Figure_1.png", use_column_width=True, caption="Training History")
+    else:
+        st.warning("Missing image: Figure_1.png")
+
+with col_plot2:
+    if os.path.exists("Figure_2.png"):
+        st.image("Figure_2.png", use_column_width=True, caption="Evaluation Metrics")
+    else:
+        st.warning("Missing image: Figure_2.png")
+
+st.markdown("</div>", unsafe_allow_html=True)
+
+# ----------------------- DETECTION SECTION -----------------
+
+st.markdown("<br>", unsafe_allow_html=True)
+
+col_left, col_right = st.columns([1.3, 1])
+
+with col_left:
+
+    st.markdown("<div class='glass-card upload-box'>", unsafe_allow_html=True)
+
+    st.subheader("🖼 Upload Images")
+
+    # ----------------------------------------------------------
+    # accept_multiple_files=True enables batch analysis (Issue #52)
+    # The widget returns a list; an empty list means nothing uploaded.
+    # ----------------------------------------------------------
+    uploaded_files = st.file_uploader(
+        "Drop or browse social media images (select one or more)",
+        type=["jpg", "jpeg", "png", "webp"],
+        accept_multiple_files=True,
+        label_visibility="collapsed",
+    )
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+with col_right:
+
+    st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
+
+    st.subheader("📊 Detection Results")
+
+    if not uploaded_files:
+
+        st.write(
+            "Upload one or more images on the left to run deepfake detection."
+        )
+
+    elif model is None:
+
+        st.error(
+            "Model could not be loaded. Detection is unavailable."
+        )
+
+    else:
+
+        # ---- constants ----
+        MAX_FILE_SIZE_MB = 10
+        MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
+
+        # ---- per-batch accumulators ----
+        batch_results = []          # list of result dicts for the summary table
+        batch_errors  = []          # list of (filename, error_message)
+
+        # Initialise session history once
+        if "prediction_history" not in st.session_state:
+            st.session_state.prediction_history = []
+
+        # ---- process every uploaded file ----
+        progress_bar = st.progress(0, text="Analysing images…")
+
+        for idx, uploaded_file in enumerate(uploaded_files):
+
+            # Update progress
+            progress_bar.progress(
+                (idx + 1) / len(uploaded_files),
+                text=f"Analysing {uploaded_file.name} ({idx + 1}/{len(uploaded_files)})…"
+            )
+
+            # --- size guard ---
+            if uploaded_file.size > MAX_FILE_SIZE_BYTES:
+                batch_errors.append((
+                    uploaded_file.name,
+                    f"File too large ({uploaded_file.size / (1024 * 1024):.1f} MB). "
+                    f"Maximum allowed is {MAX_FILE_SIZE_MB} MB."
+                ))
+                continue
+
+            # --- decode raw bytes ---
+>>>>>>> upstream/main
             try:
 
                 label, confidence, processed_image = predict_image(image)

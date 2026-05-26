@@ -1,15 +1,65 @@
 from functools import lru_cache
 from pathlib import Path
 from io import BytesIO
+import io
+import os
 
 import cv2
 import numpy as np
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageOps
 
 from config import IMAGE_SIZE
-from exceptions import PreprocessingError
 
 MIN_IMAGE_DIM = 10
+
+# --- Decompression bomb protection (issue #47) ---
+# cv2.imdecode allocates the full uncompressed pixel buffer regardless of
+# how small the compressed file is, so a tiny PNG with huge declared
+# dimensions can crash the process with OOM. We use PIL to parse only the
+# header (microseconds, no pixel allocation) and reject oversized images
+# before cv2 sees them.
+MAX_PIXELS_ENV = "PIXELTRUTH_MAX_PIXELS"
+DEFAULT_MAX_PIXELS = 25_000_000  # 25 megapixels covers typical phone/DSLR photos
+
+
+def _get_max_pixels() -> int:
+    """Read the pixel cap from the env var, fall back to the default."""
+    raw = os.getenv(MAX_PIXELS_ENV, "").strip()
+    if not raw:
+        return DEFAULT_MAX_PIXELS
+    try:
+        value = int(raw)
+        return value if value > 0 else DEFAULT_MAX_PIXELS
+    except ValueError:
+        return DEFAULT_MAX_PIXELS
+
+
+def _validate_compressed_image_dimensions(image_bytes: bytes) -> None:
+    """Reject image bytes whose declared dimensions exceed the configured cap.
+
+    PIL's Image.open only reads the image header; it does not allocate the
+    full pixel buffer, so this is safe to run on untrusted input. PIL also
+    raises DecompressionBombError on its own (default ~89 MP); we catch that
+    and surface our own "too large" message for consistency.
+    """
+    max_pixels = _get_max_pixels()
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as img:
+            width, height = img.size
+    except Image.DecompressionBombError as exc:
+        raise ValueError(
+            f"Image too large: declared dimensions exceed safety limits "
+            f"(maximum is {max_pixels:,} pixels)."
+        ) from exc
+    except Exception as exc:
+        raise ValueError(f"Could not read image header: {exc}") from exc
+
+    pixel_count = width * height
+    if pixel_count > max_pixels:
+        raise ValueError(
+            f"Image too large: {width}x{height} ({pixel_count:,} pixels). "
+            f"Maximum is {max_pixels:,} pixels. Try resizing the image first."
+        )
 
 
 def validate_image_dimensions(image: np.ndarray) -> None:
@@ -33,12 +83,21 @@ def preprocess_image_array(image: np.ndarray) -> np.ndarray:
         image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
     elif image.shape[2] == 3:
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+<<<<<<< HEAD
+    elif image.shape[2] == 4:
+        image = cv2.cvtColor(image, cv2.COLOR_BGRA2RGB)
     elif image.shape[2] == 4:
         image = cv2.cvtColor(image, cv2.COLOR_BGRA2RGB)
     else:
         raise ValueError(f"Unsupported image channel count: {image.shape[2]}.")
+    else:
+    image = cv2.resize(image, IMAGE_SIZE)
 
     image = cv2.resize(image, IMAGE_SIZE)
+=======
+   
+    image = cv2.resize(image, TARGET_IMAGE_SIZE)
+>>>>>>> upstream/main
     image = image.astype("float32")
     image = np.expand_dims(image, axis=0)
     return image
@@ -66,43 +125,61 @@ def batch_preprocess(images: list[np.ndarray]) -> np.ndarray:
     if not images:
         raise ValueError("Received an empty list.")
     return np.concatenate([preprocess_image_array(img) for img in images], axis=0)
+<<<<<<< HEAD
 
-
-@lru_cache(maxsize=32)
 def decode_image_bytes(image_bytes: bytes) -> np.ndarray:
-    """Decode raw bytes into a BGR numpy array.
-
-    Raises
-    ------
-    ValueError
-        When the bytes cannot be decoded into a valid image.
-    """
-    # Protect against decompression bombs by checking dimensions first
-    MAX_IMAGE_PIXELS = 50_000_000  # conservative cap (~7k x 7k)
+    _validate_compressed_image_dimensions(image_bytes)
 
     try:
-        with Image.open(BytesIO(image_bytes)) as pil_img:
-            w, h = pil_img.size
-            if (w * h) > MAX_IMAGE_PIXELS:
-                raise PreprocessingError(
-                    "Image exceeds maximum allowed pixel area and may be unsafe to process."
-                )
-    except UnidentifiedImageError:
-        raise PreprocessingError("The uploaded file is not a recognizable image format.")
-    except PreprocessingError:
-        raise
-    except Exception:
-        # Any other PIL errors are surfaced as preprocessing issues
-        raise PreprocessingError("Failed to validate image bytes before decoding.")
+        pil_image = Image.open(BytesIO(image_bytes))
 
-    file_array = np.asarray(bytearray(image_bytes), dtype=np.uint8)
+        # Normalize EXIF orientation metadata
+        pil_image = ImageOps.exif_transpose(pil_image)
+
+        # Ensure RGB format
+        pil_image = pil_image.convert("RGB")
+
+        # Convert PIL -> NumPy
+        image = np.array(pil_image)
+
+        # Convert RGB -> BGR for OpenCV compatibility
+        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+
+        return image
+
+    except Exception as exc:
+        raise ValueError(
+            "The uploaded file appears to be corrupted or is not a valid image."
+        ) from exc
     image = cv2.imdecode(file_array, cv2.IMREAD_COLOR)
     if image is None:
         raise PreprocessingError(
-            "The uploaded file appears to be corrupted or is not a valid image."
-        )
-    return image
+=======
 
+    _validate_compressed_image_dimensions(image_bytes)
+
+    try:
+        pil_image = Image.open(BytesIO(image_bytes))
+
+        # Normalize EXIF orientation metadata
+        pil_image = ImageOps.exif_transpose(pil_image)
+
+        # Ensure RGB format
+        pil_image = pil_image.convert("RGB")
+
+        # Convert PIL -> NumPy
+        image = np.array(pil_image)
+
+        # Convert RGB -> BGR for OpenCV compatibility
+        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+
+        return image
+
+    except Exception as exc:
+        raise ValueError(
+>>>>>>> upstream/main
+            "The uploaded file appears to be corrupted or is not a valid image."
+        ) from exc
 
 @lru_cache(maxsize=32)
 def preprocess_image_bytes(image_bytes: bytes) -> np.ndarray:
