@@ -1,6 +1,6 @@
-from tensorflow.keras.applications.mobilenet_v2 import MobileNetV2
+from tensorflow.keras.applications.mobilenet_v2 import MobileNetV2, preprocess_input
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dropout, Dense, BatchNormalization, GlobalAveragePooling2D, Rescaling, RandomFlip
+from tensorflow.keras.layers import Dropout, Dense, BatchNormalization, GlobalAveragePooling2D, RandomFlip
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 import tensorflow as tf
 import matplotlib.pyplot as plt
@@ -13,13 +13,13 @@ EPOCHS = 10
 VALIDATION_SPLIT = 0.2
 
 train_datagen = ImageDataGenerator(
-    rescale=1./255,
+    preprocessing_function=preprocess_input,
     horizontal_flip=True,
     validation_split=VALIDATION_SPLIT
 )
 
 val_datagen = ImageDataGenerator(
-    rescale=1./255,
+    preprocessing_function=preprocess_input,
     validation_split=VALIDATION_SPLIT
 )
 
@@ -39,7 +39,6 @@ mnet = MobileNetV2(include_top=False, weights="imagenet", input_shape=(IMAGE_SIZ
 
 model = Sequential([
     RandomFlip("horizontal"),
-    Rescaling(1./255),
     mnet,
     GlobalAveragePooling2D(),
     Dense(512, activation="relu"),
