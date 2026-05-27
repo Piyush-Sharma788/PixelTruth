@@ -11,6 +11,8 @@ from functools import lru_cache
 
 from config import IMAGE_SIZE
 
+ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tiff"}
+
 MIN_IMAGE_DIM = 10
 
 # --- Decompression bomb protection (issue #47) ---
@@ -88,6 +90,12 @@ def preprocess_image_from_path(image_path: str | Path) -> np.ndarray:
     path = Path(image_path)
     if not path.exists():
         raise FileNotFoundError(f"No file found at: {path}")
+    
+    if path.suffix.lower() not in ALLOWED_EXTENSIONS:
+        raise ValueError(
+            f"Unsupported file type '{path.suffix}'. "
+            f"Allowed types: {', '.join(sorted(ALLOWED_EXTENSIONS))}"
+        )
     
     image = cv2.imread(str(path), cv2.IMREAD_COLOR)
     if image is None:
