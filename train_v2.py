@@ -41,7 +41,7 @@ mnet.trainable = False
 
 model = Sequential([
     RandomFlip("horizontal"),
-    Rescaling(1./255, input_shape=(96, 96, 3)),
+    Rescaling(scale=1./127.5, offset=-1., input_shape=(96, 96, 3)),
     mnet,
     GlobalAveragePooling2D(),
     Dense(512, activation="relu"),

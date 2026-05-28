@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
-from preprocessing import preprocess_image_bytes
+from preprocessing import preprocess_image_bytes, preprocess_image_array
 import logging
 
 from exceptions import (
@@ -21,7 +21,8 @@ from exceptions import (
     ModelExecutionError,
 )
 
-from utils.model_loader import load_cached_model
+from utils.model_loader import load_cached_model, get_model_mtime
+from inference import decode_prediction
 
 logging.basicConfig(
     level=logging.INFO,
@@ -62,7 +63,7 @@ def preprocess_image(image_input) -> np.ndarray:
     Returns
     -------
     np.ndarray
-        Shape ``(1, H, W, 3)`` with values in ``[0, 1]``, channels in RGB
+        Shape ``(1, H, W, 3)`` with values in ``[0, 255]``, channels in RGB
         order — ready to be passed directly to ``model.predict()``.
 
     Raises
@@ -77,34 +78,57 @@ def preprocess_image(image_input) -> np.ndarray:
         When *image_input* is not a supported type.
     """
 
-    if not os.path.exists(image_path):
-        raise FileNotFoundError(f"Image not found: {image_path}")
+    if isinstance(image_input, (str, Path)):
+        image_path = Path(image_input)
+        if not image_path.exists():
+            raise FileNotFoundError(f"Image not found: {image_path}")
 
-    ext = os.path.splitext(image_path)[1].lower()
+        ext = image_path.suffix.lower()
+        if ext not in SUPPORTED_EXTENSIONS:
+            raise ValueError(
+                f"Unsupported file extension '{ext}'. "
+                f"Supported: {', '.join(sorted(SUPPORTED_EXTENSIONS))}"
+            )
 
-    if ext not in SUPPORTED_EXTENSIONS:
-        raise ValueError(
-            f"Unsupported file extension '{ext}'. "
-            f"Supported: {', '.join(sorted(SUPPORTED_EXTENSIONS))}"
-        )
+        try:
+            with open(image_path, "rb") as file_handle:
+                image_bytes = file_handle.read()
+            return preprocess_image_bytes(image_bytes)
+        except Exception as e:
+            logger.error(
+                f"Image preprocessing failed for {image_path}: {e}",
+                exc_info=True
+            )
+            raise PreprocessingError(
+                f"Failed to preprocess image: {str(e)}"
+            ) from e
 
-    try:
+    elif isinstance(image_input, bytes):
+        try:
+            return preprocess_image_bytes(image_input)
+        except Exception as e:
+            logger.error(
+                f"Image preprocessing failed for bytes: {e}",
+                exc_info=True
+            )
+            raise PreprocessingError(
+                f"Failed to preprocess image bytes: {str(e)}"
+            ) from e
 
-        with open(image_path, "rb") as file_handle:
-            image_bytes = file_handle.read()
+    elif isinstance(image_input, np.ndarray):
+        try:
+            return preprocess_image_array(image_input)
+        except Exception as e:
+            logger.error(
+                f"Image preprocessing failed for numpy array: {e}",
+                exc_info=True
+            )
+            raise PreprocessingError(
+                f"Failed to preprocess image array: {str(e)}"
+            ) from e
 
-        return preprocess_image_bytes(image_bytes)
-
-    except Exception as e:
-
-        logger.error(
-            f"Image preprocessing failed for {image_path}: {e}",
-            exc_info=True
-        )
-
-        raise PreprocessingError(
-            f"Failed to preprocess image: {str(e)}"
-        ) from e
+    else:
+        raise TypeError(f"Unsupported image input type: {type(image_input)}")
 
 
 # ---------------------------------------------------------------------------
@@ -112,15 +136,15 @@ def preprocess_image(image_input) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 def predict_image(
-    image_path: str,
+    image_input: str | Path | bytes | np.ndarray,
     model_path: str | None = None
 ) -> dict:
     """Run deepfake detection on a single image.
 
     Parameters
     ----------
-    image_path:
-        Path to the image to classify.
+    image_input:
+        Path, raw bytes, or BGR numpy array to classify.
 
     model_path:
         Optional override for the model file location.
@@ -139,10 +163,10 @@ def predict_image(
     Raises
     ------
     FileNotFoundError
-        When *image_path* does not exist on disk.
+        When path input does not exist on disk.
 
     ValueError
-        When the file extension is not supported.
+        When file extension is not supported or bytes cannot be decoded.
 
     PreprocessingError
         When the image cannot be decoded or preprocessed.
@@ -151,13 +175,11 @@ def predict_image(
         When model inference fails.
     """
 
-    image = preprocess_image(image_path)
+    image = preprocess_image(image_input)
 
     try:
-
         # Cached lazy-loaded model
-        model = load_cached_model()
-
+        model = load_cached_model(get_model_mtime())
         prediction = model.predict(image, verbose=0)
 
     except (
@@ -168,30 +190,21 @@ def predict_image(
         raise
 
     except Exception as e:
-
         logger.error(
             f"Model prediction failed: {e}",
             exc_info=True
         )
-
         raise ModelExecutionError(
             f"Model prediction failed: {str(e)}"
         ) from e
 
-    class_index = int(np.argmax(prediction, axis=1)[0])
-
-    confidence = float(np.max(prediction)) * 100
-
-    # Dataset mapping:
-    # class 0 = Real
-    # class 1 = Fake
-    label = "Fake" if class_index == 1 else "Real"
+    label, confidence = decode_prediction(prediction)
 
     result: dict = {
         "label": label,
         "confidence": confidence,
         "raw": prediction[0].tolist(),
-        "processed_image": processed,
+        "processed_image": image,
     }
 
     # Include path metadata when the input was a file path
@@ -341,7 +354,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"Raw output : {result['raw']}")
 
             print(f"Prediction : {result['label']}")
-            print(f"Confidence : {result['confidence']:.1f}%")
+            print(f"Confidence : {result['confidence'] * 100:.1f}%")
 
     return exit_code
 
