@@ -1,10 +1,10 @@
 import os
-import numpy as np
 import pandas as pd
 from datetime import datetime
 import streamlit as st
 from preprocessing import decode_image_bytes, preprocess_image_bytes
 import logging
+import numpy as np
 
 from gradcam import make_gradcam_heatmap, overlay_heatmap
 
@@ -351,9 +351,8 @@ with col_right:
             # --- Grad-CAM (best-effort, non-blocking) ---
             gradcam_image = None
             try:
-                backbone_model  = model.layers[0]
-                last_conv_layer = find_last_conv_layer(backbone_model)
-                heatmap         = make_gradcam_heatmap(processed_img, backbone_model, last_conv_layer)
+                last_conv_layer = find_last_conv_layer(model)
+                heatmap         = make_gradcam_heatmap(processed_img, model, last_conv_layer)
                 gradcam_image   = overlay_heatmap(bgr_image, heatmap)
             except Exception as e:
                 logger.warning(f"Grad-CAM failed for {uploaded_file.name}: {e}", exc_info=True)

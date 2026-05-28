@@ -74,27 +74,30 @@ def load_model_safe(
         raise ModelExecutionError(f"Failed to load model: {exc}") from exc
 
 
-def find_last_conv_layer(model) -> str:
-    """Return the name of the last convolutional layer in the model.
-
-    The function is intentionally permissive: it looks for layers whose
-    class name contains 'Conv' (e.g., Conv2D). If no convolutional layer
-    is found, a ValueError is raised.
-    """
-    # Prefer scanning model.layers if the object is a Model or Sequential
+def find_last_conv_layer(model):
+    """Recursively search for the last convolutional layer object in the model."""
+    # We want to traverse layers in reverse order.
+    # If a layer has a 'layers' attribute, it's a nested container (Sequential or Functional Model).
+    # We should search inside it recursively.
     layers = getattr(model, "layers", None) or []
-
     for layer in reversed(layers):
+        if hasattr(layer, "layers") and getattr(layer, "layers"):
+            try:
+                return find_last_conv_layer(layer)
+            except ValueError:
+                # If no conv layer was found in this sub-model, continue searching other layers
+                continue
+
         clsname = layer.__class__.__name__
         if "Conv" in clsname:
-            return layer.name
+            return layer
 
-    # Fallback: examine nested attributes (safety for unusual wrappers)
+    # Fallback using _flatten_layers if available
     try:
-        for layer in reversed(list(model._flatten_layers())):  # type: ignore[attr-defined]
+        for layer in reversed(list(model._flatten_layers())):
             clsname = layer.__class__.__name__
             if "Conv" in clsname:
-                return layer.name
+                return layer
     except Exception:
         pass
 

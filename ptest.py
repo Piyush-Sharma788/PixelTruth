@@ -145,15 +145,14 @@ class TestPreprocessImageBytes:
         with pytest.raises(Exception):
             preprocessing.preprocess_image_bytes(b"not an image")
 
-    def test_caching_returns_same_result(self):
-        """Identical bytes should hit the LRU cache and return the same object."""
+    def test_uploaded_bytes_are_not_retained(self):
+        """Uploaded data should not remain in a process-global cache."""
         preprocessing.preprocess_image_bytes.cache_clear()
         raw = image_to_png_bytes(make_blank_image())
 
-        first = preprocessing.preprocess_image_bytes(raw)
-        second = preprocessing.preprocess_image_bytes(raw)
+        preprocessing.preprocess_image_bytes(raw)
 
-        assert first is second, "Cache did not return the same object for identical input"
+        assert preprocessing.preprocess_image_bytes.cache_info().currsize == 0
 
 
 # ---------------------------------------------------------------------------

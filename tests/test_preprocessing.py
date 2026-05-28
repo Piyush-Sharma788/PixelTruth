@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from preprocessing import batch_preprocess, preprocess_image_array
+from preprocessing import batch_preprocess, preprocess_image_array, preprocess_image_bytes
 
 
 def test_preprocess_image_array_resizes_and_converts_bgr_to_rgb():
@@ -29,3 +29,15 @@ def test_batch_preprocess_validates_input():
 
     with pytest.raises(ValueError, match="too small"):
         preprocess_image_array(np.zeros((5, 5, 3), dtype=np.uint8))
+
+
+def test_uploaded_bytes_are_not_retained_in_cache():
+    import cv2
+
+    ok, encoded = cv2.imencode(".png", np.zeros((20, 20, 3), dtype=np.uint8))
+    assert ok
+
+    preprocess_image_bytes.cache_clear()
+    preprocess_image_bytes(encoded.tobytes())
+
+    assert preprocess_image_bytes.cache_info().currsize == 0

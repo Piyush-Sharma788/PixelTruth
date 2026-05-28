@@ -10,6 +10,8 @@ from PIL import Image, ImageOps
 
 from config import IMAGE_SIZE
 
+ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tiff"}
+
 MIN_IMAGE_DIM = 10
 
 # --- Decompression bomb protection (issue #47) ---
@@ -98,6 +100,12 @@ def preprocess_image_from_path(image_path: str | Path) -> np.ndarray:
     if not path.exists():
         raise FileNotFoundError(f"No file found at: {path}")
 
+    if path.suffix.lower() not in ALLOWED_EXTENSIONS:
+        raise ValueError(
+            f"Unsupported file type '{path.suffix}'. "
+            f"Allowed types: {', '.join(sorted(ALLOWED_EXTENSIONS))}"
+        )
+
     image = cv2.imread(str(path), cv2.IMREAD_COLOR)
     if image is None:
         raise ValueError(f"Could not decode image at '{path}'.")
@@ -117,7 +125,7 @@ def batch_preprocess(images: list[np.ndarray]) -> np.ndarray:
     return np.concatenate([preprocess_image_array(img) for img in images], axis=0)
 
 
-@lru_cache(maxsize=32)
+@lru_cache(maxsize=0)
 def decode_image_bytes(image_bytes: bytes) -> np.ndarray:
     """Decode raw bytes into a correctly oriented BGR numpy array.
 
@@ -153,7 +161,7 @@ def decode_image_bytes(image_bytes: bytes) -> np.ndarray:
         ) from exc
 
 
-@lru_cache(maxsize=32)
+@lru_cache(maxsize=0)
 def preprocess_image_bytes(image_bytes: bytes) -> np.ndarray:
-    """Decode *and* preprocess raw image bytes in one shot."""
+    """Decode and preprocess bytes without retaining uploaded data in memory."""
     return preprocess_image_array(decode_image_bytes(image_bytes))

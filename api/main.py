@@ -1,6 +1,4 @@
 import logging
-import os
-import tempfile
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -9,6 +7,19 @@ from predict import predict_image
 from exceptions import PreprocessingError, ModelExecutionError
 
 logger = logging.getLogger(__name__)
+MAX_UPLOAD_SIZE_BYTES = 10 * 1024 * 1024
+UPLOAD_READ_CHUNK_BYTES = 1024 * 1024
+
+
+async def _read_image_bytes(file: UploadFile) -> bytes:
+    chunks = []
+    total_size = 0
+    while chunk := await file.read(UPLOAD_READ_CHUNK_BYTES):
+        total_size += len(chunk)
+        if total_size > MAX_UPLOAD_SIZE_BYTES:
+            raise HTTPException(status_code=413, detail="Uploaded image is too large.")
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 app = FastAPI(
     title="PixelTruth API",
@@ -34,31 +45,16 @@ async def detect_image(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="Uploaded file must be an image.")
 
     try:
-        # Read raw image bytes
-        image_bytes = await file.read()
-        
-        # Get extension to ensure supported format
-        ext = os.path.splitext(file.filename)[1].lower() if file.filename else ".jpg"
-        
-        # Create a temporary file
-        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
-            tmp.write(image_bytes)
-            tmp_path = tmp.name
-            
-        try:
-            # Pass the temp file path instead of bytes
-            result = predict_image(tmp_path)
-            
-            return {
-                "verdict": result["label"],
-                "confidence": result["confidence"],
-                "raw_scores": result["raw"]
-            }
-        finally:
-            # Ensure the temp file is cleaned up
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
-        
+        image_bytes = await _read_image_bytes(file)
+        result = predict_image(image_bytes)
+        return {
+            "verdict": result["label"],
+            "confidence": result["confidence"],
+            "raw_scores": result["raw"]
+        }
+
+    except HTTPException:
+        raise
     except PreprocessingError as e:
         logger.error(f"Preprocessing error: {e}")
         raise HTTPException(status_code=422, detail=str(e))

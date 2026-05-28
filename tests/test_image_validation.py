@@ -65,6 +65,14 @@ def test_accepts_normal_image():
     assert result.shape[:2] == (100, 100)
 
 
+def test_decoder_does_not_cache_full_resolution_uploads():
+    valid = make_real_png(100, 100)
+
+    decode_image_bytes(valid)
+
+    assert decode_image_bytes.cache_info().currsize == 0
+
+
 def test_env_var_tightens_cap(monkeypatch):
     """Setting PIXELTRUTH_MAX_PIXELS should make a previously-valid image fail."""
     monkeypatch.setenv("PIXELTRUTH_MAX_PIXELS", "9999")  # 9999 < 100*100 = 10000
