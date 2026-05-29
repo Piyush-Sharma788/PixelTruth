@@ -104,7 +104,9 @@ async def detect_image(request: Request, file: UploadFile = File(...)):
         return {
             "verdict": result["label"],
             "confidence": result["confidence"],
-            "raw_scores": result["raw"]
+            "raw_scores": result["raw"],
+            "face_detected": result.get("face_detected", False),
+            "face_box": result.get("face_box", None)
         }
 
     except HTTPException:

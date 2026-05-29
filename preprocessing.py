@@ -153,3 +153,39 @@ def get_metadata_from_bytes(image_bytes: bytes) -> dict:
     """
     image = decode_image_bytes(image_bytes)
     return get_image_metadata(image)
+
+
+def detect_and_crop_face(image: np.ndarray) -> tuple[np.ndarray, tuple[int, int, int, int] | None]:
+    """Detect the primary face in a BGR image and crop it.
+
+    If no face is found, returns the original image and None.
+    The primary face is defined as the face with the largest area (width * height).
+    """
+    cascade_path = os.path.join(cv2.data.haarcascades, "haarcascade_frontalface_default.xml")
+    if not os.path.exists(cascade_path):
+        return image, None
+
+    face_cascade = cv2.CascadeClassifier(cascade_path)
+    if face_cascade.empty():
+        return image, None
+
+    # Convert to grayscale for detection
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    # Detect faces
+    faces = face_cascade.detectMultiScale(
+        gray,
+        scaleFactor=1.1,
+        minNeighbors=5,
+        minSize=(30, 30)
+    )
+
+    if len(faces) == 0:
+        return image, None
+
+    # Select the primary face (largest by bounding box area)
+    primary_face = max(faces, key=lambda f: f[2] * f[3])
+    x, y, w, h = primary_face
+
+    cropped = image[int(y):int(y+h), int(x):int(x+w)]
+    return cropped, (int(x), int(y), int(w), int(h))

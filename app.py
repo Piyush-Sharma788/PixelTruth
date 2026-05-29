@@ -2,7 +2,7 @@ import os
 import pandas as pd
 from datetime import datetime
 import streamlit as st
-from preprocessing import decode_image_bytes, preprocess_image_bytes
+from preprocessing import decode_image_bytes, preprocess_image_bytes, detect_and_crop_face, preprocess_image_array
 import logging
 
 from gradcam import get_backbone_submodel, make_gradcam_heatmap, overlay_heatmap
@@ -183,7 +183,7 @@ if os.path.exists("coverpage.png"):
 
     st.image(
         "coverpage.png",
-        use_container_width=True
+        use_column_width=True
     )
 
 # ----------------------- TOP INFO SECTION ------------------
@@ -230,13 +230,13 @@ col_plot1, col_plot2 = st.columns(2)
 
 with col_plot1:
     if os.path.exists("Figure_1.png"):
-        st.image("Figure_1.png", use_container_width=True, caption="Training History")  # FIX #77: replaced deprecated use_column_width=True
+        st.image("Figure_1.png", use_column_width=True, caption="Training History")
     else:
         st.warning("Missing image: Figure_1.png")
 
 with col_plot2:
     if os.path.exists("Figure_2.png"):
-        st.image("Figure_2.png", use_container_width=True, caption="Evaluation Metrics")  # FIX #77: replaced deprecated use_column_width=True
+        st.image("Figure_2.png", use_column_width=True, caption="Evaluation Metrics")
     else:
         st.warning("Missing image: Figure_2.png")
 
@@ -321,16 +321,27 @@ with col_right:
                 batch_errors.append((uploaded_file.name, f"Could not read file: {e}"))
                 continue
 
-            label         = None
-            confidence    = None
-            processed_img = None
+            label          = None
+            confidence     = None
+            processed_img  = None
+            face_image     = None
+            face_detected  = False
+            face_box       = None
+            box_image      = bgr_image.copy()
 
             try:
-                processed_img = preprocess_uploaded_image(raw_bytes)
+                face_image, face_box = detect_and_crop_face(bgr_image)
+                if face_box is not None:
+                    face_detected = True
+                    x, y, w, h = face_box
+                    import cv2
+                    cv2.rectangle(box_image, (x, y), (x + w, y + h), (94, 219, 120), 3)
+
+                processed_img = preprocess_image_array(face_image)
                 prediction    = model.predict(processed_img, verbose=0)
-                class_label   = int(np.argmax(prediction, axis=1)[0])
-                confidence    = float(np.max(prediction))
-                label         = "Real" if class_label == 0 else "Fake"
+
+                from predict import decode_prediction
+                label, confidence, _ = decode_prediction(prediction)
 
             except PreprocessingError as e:
                 logger.error(f"PreprocessingError for {uploaded_file.name}: {e}", exc_info=True)
@@ -353,17 +364,20 @@ with col_right:
                 backbone_model  = get_backbone_submodel(model)
                 last_conv_layer = find_last_conv_layer(backbone_model)
                 heatmap         = make_gradcam_heatmap(processed_img, backbone_model, last_conv_layer)
-                gradcam_image   = overlay_heatmap(bgr_image, heatmap)
+                gradcam_image   = overlay_heatmap(face_image, heatmap)
             except Exception as e:
                 logger.warning(f"Grad-CAM failed for {uploaded_file.name}: {e}", exc_info=True)
 
             batch_results.append({
-                "filename":     uploaded_file.name,
-                "label":        label,
-                "confidence":   confidence,
-                "bgr_image":    bgr_image,
-                "gradcam":      gradcam_image,
-                "is_uncertain": confidence < LOW_CONFIDENCE_THRESHOLD,
+                "filename":      uploaded_file.name,
+                "label":         label,
+                "confidence":    confidence,
+                "bgr_image":     bgr_image,
+                "box_image":     box_image,
+                "face_image":    face_image,
+                "face_detected": face_detected,
+                "gradcam":       gradcam_image,
+                "is_uncertain":  confidence < LOW_CONFIDENCE_THRESHOLD,
             })
 
             st.session_state.prediction_history.append({
@@ -413,22 +427,47 @@ with col_right:
 
             with st.expander(expander_label, expanded=(len(batch_results) == 1)):
 
-                img_col, result_col = st.columns([1, 1])
+                img_col, result_col = st.columns([1.3, 1])
 
                 with img_col:
-                    st.image(
-                        res["bgr_image"],
-                        channels="BGR",
-                        caption="Uploaded image",
-                        use_container_width=True,
-                    )
-                    if res["gradcam"] is not None:
+                    if res["face_detected"]:
                         st.image(
-                            res["gradcam"],
+                            res["box_image"],
                             channels="BGR",
-                            caption="Grad-CAM attention map",
-                            use_container_width=True,
+                            caption="Uploaded image (face detected)",
+                            use_column_width=True,
                         )
+                        st.markdown("<div style='margin-top: 10px; margin-bottom: 5px; font-weight: 600;'>🔍 Model Input Analysis</div>", unsafe_allow_html=True)
+                        crop_col1, crop_col2 = st.columns(2)
+                        with crop_col1:
+                            st.image(
+                                res["face_image"],
+                                channels="BGR",
+                                caption="Detected face region",
+                                use_column_width=True,
+                            )
+                        with crop_col2:
+                            if res["gradcam"] is not None:
+                                st.image(
+                                    res["gradcam"],
+                                    channels="BGR",
+                                    caption="Grad-CAM face details",
+                                    use_column_width=True,
+                                )
+                    else:
+                        st.image(
+                            res["bgr_image"],
+                            channels="BGR",
+                            caption="Uploaded image (no face detected, full image analyzed)",
+                            use_column_width=True,
+                        )
+                        if res["gradcam"] is not None:
+                            st.image(
+                                res["gradcam"],
+                                channels="BGR",
+                                caption="Grad-CAM attention map (full image)",
+                                use_column_width=True,
+                            )
 
                 with result_col:
                     if is_uncertain:

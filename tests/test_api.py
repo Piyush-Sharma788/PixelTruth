@@ -41,6 +41,8 @@ def test_api_returns_prediction(monkeypatch):
         "verdict": "Real",
         "confidence": 0.8,
         "raw_scores": [0.8],
+        "face_detected": False,
+        "face_box": None,
     }
     assert provided_inputs == [b"data"]
 
