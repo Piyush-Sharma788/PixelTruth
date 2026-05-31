@@ -30,6 +30,9 @@ jobs:
       - name: Check installed packages
         run: python -m pip check
 
+      - name: Check for merge conflict markers
+        run: python scripts/check_merge_conflicts.py
+
       - name: Compile Python sources
         run: python -m compileall .
 
