@@ -1,10 +1,19 @@
-import pytest
+import os
+# Force TensorFlow to use CPU only to avoid GPU-related segmentation faults during testing
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+
+# Attempt to import TensorFlow; if unavailable, skip all tests in this file
+try:
+    import tensorflow as tf
+except Exception:
+    import pytest
+    pytest.skip("TensorFlow import failed, skipping GradCAM tests", allow_module_level=True)
+
 import numpy as np
-import tensorflow as tf
+import pytest
 
 from inference import find_last_conv_layer
 from gradcam import make_gradcam_heatmap
-
 
 def test_find_last_conv_layer_nested_backbone():
     # 1. Create a nested backbone Sequential model
