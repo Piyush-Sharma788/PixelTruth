@@ -15,6 +15,8 @@ def test_create_task():
     assert task.status == TaskStatus.PENDING
     assert task.verdict is None
     assert task.error is None
+    assert task.face_detected is None
+    assert task.face_box is None
 
 
 def test_task_lifecycle():
@@ -22,7 +24,16 @@ def test_task_lifecycle():
     task_id = store.create_task()
 
     store.mark_running(task_id)
-    store.mark_completed(task_id, {"label": "Real", "confidence": 0.7, "raw": [0.7]})
+    store.mark_completed(
+        task_id,
+        {
+            "label": "Real",
+            "confidence": 0.7,
+            "raw": [0.7],
+            "face_detected": True,
+            "face_box": (1, 2, 3, 4),
+        },
+    )
 
     task = store.get_task(task_id)
 
@@ -31,6 +42,8 @@ def test_task_lifecycle():
     assert task.verdict == "Real"
     assert task.confidence == 0.7
     assert task.raw_scores == [0.7]
+    assert task.face_detected is True
+    assert task.face_box == [1, 2, 3, 4]
     assert task.completed_at is not None
 
 
@@ -47,6 +60,8 @@ def test_task_failure():
     assert task.status == TaskStatus.FAILED
     assert task.error == "processing error"
     assert task.completed_at is not None
+    assert task.face_detected is None
+    assert task.face_box is None
 
 
 def test_get_nonexistent_task():
@@ -62,7 +77,16 @@ def test_thread_safety():
         task_id = store.create_task()
         queue.put(task_id)
         store.mark_running(task_id)
-        store.mark_completed(task_id, {"label": "Real", "confidence": 0.5, "raw": [0.5]})
+        store.mark_completed(
+            task_id,
+            {
+                "label": "Real",
+                "confidence": 0.5,
+                "raw": [0.5],
+                "face_detected": False,
+                "face_box": None,
+            },
+        )
 
     threads = [threading.Thread(target=worker) for _ in range(20)]
     for thread in threads:
@@ -80,3 +104,5 @@ def test_thread_safety():
         assert task is not None
         assert task.status == TaskStatus.COMPLETED
         assert task.verdict == "Real"
+        assert task.face_detected is False
+        assert task.face_box is None

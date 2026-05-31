@@ -85,6 +85,8 @@ def _format_inference_response(result: dict) -> dict:
         "verdict": result["label"],
         "confidence": result["confidence"],
         "raw_scores": result["raw"],
+        "face_detected": result.get("face_detected", False),
+        "face_box": list(result["face_box"]) if result.get("face_box") is not None else None,
     }
 
 
@@ -123,14 +125,6 @@ async def detect_image(request: Request, file: UploadFile = File(...)):
         image_bytes = await _read_image_bytes(file)
         result = await asyncio.to_thread(predict_image, image_bytes)
         return _format_inference_response(result)
-        result = predict_image(image_bytes)
-        return {
-            "verdict": result["label"],
-            "confidence": result["confidence"],
-            "raw_scores": result["raw"],
-            "face_detected": result.get("face_detected", False),
-            "face_box": result.get("face_box", None)
-        }
 
     except HTTPException:
         raise

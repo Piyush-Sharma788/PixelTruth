@@ -35,6 +35,8 @@ class TaskResult(BaseModel):
     verdict: Optional[str] = None
     confidence: Optional[float] = None
     raw_scores: Optional[list[float]] = None
+    face_detected: Optional[bool] = None
+    face_box: Optional[list[int]] = None
     error: Optional[str] = None
     created_at: datetime
     completed_at: Optional[datetime] = None
@@ -86,6 +88,8 @@ class TaskStore:
                 task.verdict = result["label"]
                 task.confidence = result["confidence"]
                 task.raw_scores = result["raw"]
+                task.face_detected = result.get("face_detected", False)
+                task.face_box = list(result["face_box"]) if result.get("face_box") is not None else None
                 task.completed_at = datetime.now(timezone.utc)
 
     def mark_failed(self, task_id: str, error: str) -> None:

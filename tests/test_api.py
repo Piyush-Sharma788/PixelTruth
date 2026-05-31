@@ -19,7 +19,13 @@ def test_api_returns_prediction(monkeypatch):
 
     def fake_predict(image_bytes):
         provided_inputs.append(image_bytes)
-        return {"label": "Real", "confidence": 0.8, "raw": [0.8]}
+        return {
+            "label": "Real",
+            "confidence": 0.8,
+            "raw": [0.8],
+            "face_detected": True,
+            "face_box": (10, 20, 30, 40),
+        }
 
     monkeypatch.setattr(
         api_main,
@@ -37,8 +43,32 @@ def test_api_returns_prediction(monkeypatch):
         "verdict": "Real",
         "confidence": 0.8,
         "raw_scores": [0.8],
+        "face_detected": True,
+        "face_box": [10, 20, 30, 40],
     }
     assert provided_inputs == [b"data"]
+
+
+def test_api_returns_prediction_without_face_metadata(monkeypatch):
+    monkeypatch.setattr(
+        api_main,
+        "predict_image",
+        lambda _bytes: {"label": "Fake", "confidence": 0.2, "raw": [0.2]},
+    )
+    client = TestClient(api_main.app)
+
+    response = client.post(
+        "/api/detect", files={"file": ("sample.png", b"data", "image/png")}
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "verdict": "Fake",
+        "confidence": 0.2,
+        "raw_scores": [0.2],
+        "face_detected": False,
+        "face_box": None,
+    }
 
 
 def test_api_rejects_oversized_upload_before_prediction(monkeypatch):
@@ -61,7 +91,13 @@ def test_async_detect_returns_task_id(monkeypatch):
     monkeypatch.setattr(
         api_main,
         "predict_image",
-        lambda _bytes: {"label": "Real", "confidence": 0.95, "raw": [0.95]},
+        lambda _bytes: {
+            "label": "Real",
+            "confidence": 0.95,
+            "raw": [0.95],
+            "face_detected": True,
+            "face_box": (1, 2, 3, 4),
+        },
     )
     client = TestClient(api_main.app)
 
@@ -78,7 +114,13 @@ def test_task_status_returns_completed(monkeypatch):
     monkeypatch.setattr(
         api_main,
         "predict_image",
-        lambda _bytes: {"label": "Fake", "confidence": 0.15, "raw": [0.15]},
+        lambda _bytes: {
+            "label": "Fake",
+            "confidence": 0.15,
+            "raw": [0.15],
+            "face_detected": True,
+            "face_box": (5, 6, 7, 8),
+        },
     )
     client = TestClient(api_main.app)
 
@@ -93,6 +135,8 @@ def test_task_status_returns_completed(monkeypatch):
     assert status_response.json()["verdict"] == "Fake"
     assert status_response.json()["confidence"] == 0.15
     assert status_response.json()["raw_scores"] == [0.15]
+    assert status_response.json()["face_detected"] is True
+    assert status_response.json()["face_box"] == [5, 6, 7, 8]
 
 
 def test_task_not_found_returns_404():
