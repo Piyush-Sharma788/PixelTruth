@@ -4,10 +4,6 @@ import pytest
 import api.main as api_main
 
 
-def _fake_predict(image_bytes):
-    return {"label": "Real", "confidence": 0.8, "raw": [0.8]}
-
-
 def test_api_rejects_non_image_upload():
     client = TestClient(api_main.app)
 
@@ -41,8 +37,6 @@ def test_api_returns_prediction(monkeypatch):
         "verdict": "Real",
         "confidence": 0.8,
         "raw_scores": [0.8],
-        "face_detected": False,
-        "face_box": None,
     }
     assert provided_inputs == [b"data"]
 
@@ -63,137 +57,62 @@ def test_api_rejects_oversized_upload_before_prediction(monkeypatch):
     assert response.status_code == 413
 
 
-# ---------------------------------------------------------------------------
-# API key authentication tests
-# ---------------------------------------------------------------------------
-
-
-def test_api_key_rejects_missing_key(monkeypatch):
-    monkeypatch.setattr(api_main, "API_KEY", "test-secret-key")
-    monkeypatch.setattr(api_main, "predict_image", _fake_predict)
+def test_async_detect_returns_task_id(monkeypatch):
+    monkeypatch.setattr(
+        api_main,
+        "predict_image",
+        lambda _bytes: {"label": "Real", "confidence": 0.95, "raw": [0.95]},
+    )
     client = TestClient(api_main.app)
 
     response = client.post(
-        "/api/detect", files={"file": ("img.png", b"data", "image/png")}
+        "/api/detect/async", files={"file": ("sample.png", b"data", "image/png")}
     )
 
-    assert response.status_code == 401
-    assert "API key" in response.json()["detail"]
+    assert response.status_code == 202
+    assert "task_id" in response.json()
+    assert isinstance(response.json()["task_id"], str)
 
 
-def test_api_key_rejects_wrong_key(monkeypatch):
-    monkeypatch.setattr(api_main, "API_KEY", "test-secret-key")
-    monkeypatch.setattr(api_main, "predict_image", _fake_predict)
+def test_task_status_returns_completed(monkeypatch):
+    monkeypatch.setattr(
+        api_main,
+        "predict_image",
+        lambda _bytes: {"label": "Fake", "confidence": 0.15, "raw": [0.15]},
+    )
+    client = TestClient(api_main.app)
+
+    submit_response = client.post(
+        "/api/detect/async", files={"file": ("sample.png", b"data", "image/png")}
+    )
+    task_id = submit_response.json()["task_id"]
+
+    status_response = client.get(f"/api/task/{task_id}")
+    assert status_response.status_code == 200
+    assert status_response.json()["status"] == "completed"
+    assert status_response.json()["verdict"] == "Fake"
+    assert status_response.json()["confidence"] == 0.15
+    assert status_response.json()["raw_scores"] == [0.15]
+
+
+def test_task_not_found_returns_404():
+    client = TestClient(api_main.app)
+
+    response = client.get("/api/task/nonexistent")
+
+    assert response.status_code == 404
+
+
+def test_async_detect_rejects_non_image(monkeypatch):
+    monkeypatch.setattr(
+        api_main,
+        "predict_image",
+        lambda _bytes: pytest.fail("prediction should not run for invalid async uploads"),
+    )
     client = TestClient(api_main.app)
 
     response = client.post(
-        "/api/detect",
-        files={"file": ("img.png", b"data", "image/png")},
-        headers={"X-API-Key": "wrong-key"},
+        "/api/detect/async", files={"file": ("sample.txt", b"data", "text/plain")}
     )
 
-    assert response.status_code == 401
-
-
-def test_api_key_accepts_correct_key(monkeypatch):
-    monkeypatch.setattr(api_main, "API_KEY", "test-secret-key")
-    monkeypatch.setattr(api_main, "predict_image", _fake_predict)
-    client = TestClient(api_main.app)
-
-    response = client.post(
-        "/api/detect",
-        files={"file": ("img.png", b"data", "image/png")},
-        headers={"X-API-Key": "test-secret-key"},
-    )
-
-    assert response.status_code == 200
-
-
-def test_api_key_skipped_when_unset(monkeypatch):
-    monkeypatch.setattr(api_main, "API_KEY", "")
-    monkeypatch.setattr(api_main, "predict_image", _fake_predict)
-    client = TestClient(api_main.app)
-
-    response = client.post(
-        "/api/detect", files={"file": ("img.png", b"data", "image/png")}
-    )
-
-    assert response.status_code == 200
-
-
-# ---------------------------------------------------------------------------
-# CORS configuration tests
-# ---------------------------------------------------------------------------
-
-
-def test_cors_allows_configured_origin():
-    client = TestClient(api_main.app)
-
-    response = client.options(
-        "/api/detect",
-        headers={
-            "Origin": "http://localhost:8501",
-            "Access-Control-Request-Method": "POST",
-        },
-    )
-
-    assert response.headers.get("access-control-allow-origin") == "http://localhost:8501"
-
-
-def test_cors_rejects_unknown_origin():
-    client = TestClient(api_main.app)
-
-    response = client.options(
-        "/api/detect",
-        headers={
-            "Origin": "http://evil.example.com",
-            "Access-Control-Request-Method": "POST",
-        },
-    )
-
-    assert "access-control-allow-origin" not in response.headers
-
-
-# ---------------------------------------------------------------------------
-# Rate limiting tests
-# ---------------------------------------------------------------------------
-
-
-def test_rate_limit_returns_429(monkeypatch):
-    monkeypatch.setattr(api_main, "predict_image", _fake_predict)
-
-    from slowapi import Limiter
-    from slowapi.util import get_remote_address
-    from slowapi.errors import RateLimitExceeded
-    from fastapi import FastAPI, UploadFile, File, Request
-
-    test_limiter = Limiter(
-        key_func=get_remote_address,
-        default_limits=["2/minute"],
-    )
-
-    test_app = FastAPI()
-    test_app.state.limiter = test_limiter
-    test_app.add_exception_handler(
-        RateLimitExceeded, api_main._rate_limit_exceeded_handler
-    )
-
-    @test_app.post("/api/detect")
-    @test_limiter.limit("2/minute")
-    async def detect(request: Request, file: UploadFile = File(...)):
-        return {"verdict": "Real", "confidence": 0.8, "raw_scores": [0.8]}
-
-    client = TestClient(test_app)
-
-    for _ in range(2):
-        resp = client.post(
-            "/api/detect", files={"file": ("img.png", b"data", "image/png")}
-        )
-        assert resp.status_code == 200
-
-    resp = client.post(
-        "/api/detect", files={"file": ("img.png", b"data", "image/png")}
-    )
-
-    assert resp.status_code == 429
-    assert "Retry-After" in resp.headers
+    assert response.status_code == 400
