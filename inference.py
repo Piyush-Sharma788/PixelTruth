@@ -17,6 +17,7 @@ from exceptions import PreprocessingError, ModelExecutionError
 
 def decode_prediction(prediction: np.ndarray) -> Tuple[str, float]:
     """Convert sigmoid or two-class softmax output to a label and confidence."""
+    validate_model_output_shape(prediction)  # add this line
     scores = np.asarray(prediction, dtype=float).reshape(-1)
     if scores.size == 1:
         real_probability = float(scores[0])
@@ -157,3 +158,19 @@ def predict_image_from_bytes(model, image_bytes: bytes) -> Tuple[Optional[str], 
         raise
     except Exception as exc:
         raise ModelExecutionError(f"Model prediction failed: {exc}") from exc
+    
+def validate_model_output_shape(prediction: np.ndarray) -> None:
+    """Validate that model output shape is supported before decoding.
+
+    Args:
+        prediction: Raw output array from model.predict().
+
+    Raises:
+        ModelExecutionError: If output shape is not 1 or 2 classes.
+    """
+    scores = np.asarray(prediction).reshape(-1)
+    if scores.size not in (1, 2):
+        raise ModelExecutionError(
+            f"Unsupported model output shape: {np.asarray(prediction).shape}. "
+            f"Expected 1 (sigmoid) or 2 (softmax) outputs."
+        )
