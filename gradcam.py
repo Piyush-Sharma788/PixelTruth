@@ -3,17 +3,61 @@ import cv2
 
 
 def get_backbone_submodel(model):
-    """Return the first nested tf.keras.Model found in model.layers."""
+    """Return the backbone sub-model used for Grad-CAM gradient computation.
+
+    Why dynamic lookup?  The top-level model may be wrapped in a
+    Sequential or Functional container whose first layer is *not*
+    always the backbone (e.g. a Rescaling or InputLayer could be
+    prepended).  Hardcoding ``model.layers[0]`` silently breaks
+    Grad-CAM when the architecture changes.  This helper walks
+    ``model.layers`` and picks the best candidate dynamically.
+
+    Selection strategy
+    ------------------
+    1. Prefer the first nested ``tf.keras.Model`` whose own layers
+       include at least one convolutional layer (the real backbone).
+    2. If no conv-bearing sub-model exists, return any nested Model
+       (covers unusual wrappers).
+    3. If the top-level model itself contains conv layers directly
+       (flat architecture with no nesting), return ``model`` as-is.
+    4. Otherwise raise ``ValueError`` with an actionable message.
+    """
     # Import TensorFlow lazily to avoid import-time side effects during tests
     import tensorflow as tf
 
+    def _has_conv(m):
+        """Return True if any layer in *m* has 'Conv' in its class name."""
+        for layer in getattr(m, "layers", []):
+            if "Conv" in layer.__class__.__name__:
+                return True
+        return False
+
+    # --- Pass 1: nested sub-model with convolutional layers (best match) ---
+    first_submodel = None
     for layer in model.layers:
         if isinstance(layer, tf.keras.Model):
-            return layer
+            if first_submodel is None:
+                first_submodel = layer
+            if _has_conv(layer):
+                return layer
 
+    # --- Pass 2: nested sub-model without conv layers (unusual wrapper) ---
+    if first_submodel is not None:
+        return first_submodel
+
+    # --- Pass 3: flat model that itself has conv layers ---
+    if _has_conv(model):
+        return model
+
+    # --- Nothing found — give an actionable error ---
+    layer_types = [type(l).__name__ for l in model.layers]
     raise ValueError(
-        "No backbone sub-model found in model.layers. "
-        "Ensure the model contains a nested tf.keras.Model."
+        "No backbone sub-model found in model.layers and the model "
+        "contains no convolutional layers.  Grad-CAM requires at least "
+        "one Conv layer for gradient computation.\n"
+        f"  Layer types present: {layer_types}\n"
+        "Ensure the model contains a nested tf.keras.Model backbone "
+        "(e.g. Xception, EfficientNet) or direct Conv2D layers."
     )
 
 

@@ -360,6 +360,7 @@ with col_right:
             gradcam_image = None
 
             try:
+                # Dynamic lookup — avoids breaking Grad-CAM if model architecture changes
                 backbone_model = get_backbone_submodel(model)
                 last_conv_layer = find_last_conv_layer(backbone_model)
                 heatmap = make_gradcam_heatmap(
