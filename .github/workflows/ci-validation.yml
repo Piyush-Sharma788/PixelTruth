@@ -1,0 +1,40 @@
+name: CI Validation
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  validation:
+    name: Validation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt pytest httpx
+
+      - name: Check installed packages
+        run: python -m pip check
+
+      - name: Check for merge conflict markers
+        run: python scripts/check_merge_conflicts.py
+
+      - name: Compile Python sources
+        run: python -m compileall .
+
+      - name: Run tests
+        run: python -m pytest tests -q

@@ -1,6 +1,7 @@
 venv/
 __pycache__/
 *.pyc
+
 real_and_fake_face_detection/
 dataset.zip
 *.h5
@@ -8,3 +9,8 @@ dataset.zip
 metrics_cache.json
 
 .github/
+!.github/
+!.github/workflows/
+!.github/workflows/*.yml
+
+.DS_Store

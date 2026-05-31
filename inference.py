@@ -15,6 +15,27 @@ from model_utils import ensure_model_file, get_model_path, get_model_url, get_mo
 from exceptions import PreprocessingError, ModelExecutionError
 
 
+def decode_prediction(prediction: np.ndarray) -> Tuple[str, float]:
+    """Convert sigmoid or two-class softmax output to a label and confidence."""
+    scores = np.asarray(prediction, dtype=float).reshape(-1)
+    if scores.size == 1:
+        real_probability = float(scores[0])
+        if not 0.0 <= real_probability <= 1.0:
+            raise ModelExecutionError("Model returned a probability outside [0, 1].")
+        # Training directories are alphabetic: class 0 = fake, class 1 = real.
+        if real_probability >= 0.5:
+            return "Real", real_probability
+        return "Fake", 1.0 - real_probability
+
+    if scores.size == 2:
+        class_label = int(np.argmax(scores))
+        return ("Real" if class_label == 1 else "Fake"), float(scores[class_label])
+
+    raise ModelExecutionError(
+        f"Unsupported model output shape: {np.asarray(prediction).shape}."
+    )
+
+
 def preprocess_image(image: np.ndarray) -> np.ndarray:
     if image is None:
         raise ValueError("image must be a numpy array")
@@ -53,27 +74,30 @@ def load_model_safe(
         raise ModelExecutionError(f"Failed to load model: {exc}") from exc
 
 
-def find_last_conv_layer(model) -> str:
-    """Return the name of the last convolutional layer in the model.
-
-    The function is intentionally permissive: it looks for layers whose
-    class name contains 'Conv' (e.g., Conv2D). If no convolutional layer
-    is found, a ValueError is raised.
-    """
-    # Prefer scanning model.layers if the object is a Model or Sequential
+def find_last_conv_layer(model):
+    """Recursively search for the last convolutional layer object in the model."""
+    # We want to traverse layers in reverse order.
+    # If a layer has a 'layers' attribute, it's a nested container (Sequential or Functional Model).
+    # We should search inside it recursively.
     layers = getattr(model, "layers", None) or []
-
     for layer in reversed(layers):
+        if hasattr(layer, "layers") and getattr(layer, "layers"):
+            try:
+                return find_last_conv_layer(layer)
+            except ValueError:
+                # If no conv layer was found in this sub-model, continue searching other layers
+                continue
+
         clsname = layer.__class__.__name__
         if "Conv" in clsname:
-            return layer.name
+            return layer
 
-    # Fallback: examine nested attributes (safety for unusual wrappers)
+    # Fallback using _flatten_layers if available
     try:
-        for layer in reversed(list(model._flatten_layers())):  # type: ignore[attr-defined]
+        for layer in reversed(list(model._flatten_layers())):
             clsname = layer.__class__.__name__
             if "Conv" in clsname:
-                return layer.name
+                return layer
     except Exception:
         pass
 
@@ -96,9 +120,40 @@ def predict_image(model, image: np.ndarray) -> Tuple[Optional[str], Optional[flo
 
     try:
         prediction = model.predict(processed, verbose=0)
-        class_label = int(np.argmax(prediction, axis=1)[0])
-        confidence = float(np.max(prediction))
-        label = "Real" if class_label == 0 else "Fake"
+        label, confidence = decode_prediction(prediction)
         return label, confidence, processed
+    except ModelExecutionError:
+        raise
+    except Exception as exc:
+        raise ModelExecutionError(f"Model prediction failed: {exc}") from exc
+
+def predict_image_from_bytes(model, image_bytes: bytes) -> Tuple[Optional[str], Optional[float], Optional[np.ndarray]]:
+    """Run prediction directly from raw image bytes.
+
+    Combines preprocess_uploaded_image and predict_image in one call
+    so callers don't have to chain them manually.
+
+    Args:
+        model: Loaded Keras model or None.
+        image_bytes: Raw bytes of an encoded image file.
+
+    Returns:
+        Tuple of (label, confidence, processed_image), or
+        (None, None, None) if model is None.
+    """
+    if model is None:
+        return None, None, None
+
+    try:
+        processed = preprocess_uploaded_image(image_bytes)
+    except Exception as exc:
+        raise PreprocessingError(f"Preprocessing failed: {exc}") from exc
+
+    try:
+        prediction = model.predict(processed, verbose=0)
+        label, confidence = decode_prediction(prediction)
+        return label, confidence, processed
+    except ModelExecutionError:
+        raise
     except Exception as exc:
         raise ModelExecutionError(f"Model prediction failed: {exc}") from exc
