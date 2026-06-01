@@ -11,6 +11,7 @@ from preprocessing import (
 )
 import logging
 
+from exif_analysis import extract_exif
 from gradcam import get_backbone_submodel, make_gradcam_heatmap, overlay_heatmap
 
 from exceptions import (
@@ -306,6 +307,7 @@ with col_right:
 
             try:
                 raw_bytes = uploaded_file.read()
+                exif_data = extract_exif(raw_bytes)
                 bgr_image = decode_image_bytes(raw_bytes)
 
             except Exception as e:
@@ -383,6 +385,7 @@ with col_right:
                 "face_detected": face_detected,
                 "gradcam": gradcam_image,
                 "is_uncertain": confidence < LOW_CONFIDENCE_THRESHOLD,
+                "exif": exif_data,
             })
 
             st.session_state.prediction_history.append({
@@ -497,6 +500,28 @@ with col_right:
                     st.markdown(f"**Model prediction:** {res['label']}")
                     st.progress(res["confidence"])
                     st.caption(f"Confidence: {res['confidence'] * 100:.1f}%")
+                    
+                    st.markdown("---")
+                    st.markdown("#### 🔍 Metadata Analysis")
+                    exif = res["exif"]
+                    
+                    if exif["ai_software_detected"]:
+                        exif_icon = "🔴"
+                        label_text = f"AI software detected: {exif['software']}"
+                    elif not exif["has_exif"]:
+                        exif_icon = "🟡"
+                        label_text = "No EXIF metadata"
+                    else:
+                        exif_icon = "🟢"
+                        label_text = f"Camera: {exif.get('make','')} {exif.get('model','')}".strip()
+                    
+                    st.markdown(f"{exif_icon} **{label_text}**")
+                    st.caption(exif["suspicion_reason"])
+                    
+                    if exif["has_exif"] and exif["field_count"]:
+                        st.caption(f"{exif['field_count']} EXIF fields present"
+                                   + (" · GPS data present" if exif["gps_present"] else ""))
+                                   
                     st.markdown("</div>", unsafe_allow_html=True)
 
         if batch_errors:
