@@ -62,135 +62,161 @@ def get_backbone_submodel(model):
 
 
 
-def make_gradcam_heatmap(img_array, model, last_conv_layer, pred_index=None):
+def _find_layer_by_name_recursive(model, layer_name):
+    """Recursively search for a layer by name in model and its nested layers."""
+    try:
+        return model.get_layer(layer_name)
+    except ValueError:
+        pass
+    
+    for layer in getattr(model, "layers", []):
+        if hasattr(layer, "layers"):
+            result = _find_layer_by_name_recursive(layer, layer_name)
+            if result is not None:
+                return result
+    return None
+
+
+def _find_last_conv_layer_recursive(model):
+    """Recursively search for the last convolutional layer in the model."""
+    layers = getattr(model, "layers", None) or []
+    for layer in reversed(layers):
+        # Recursively search in nested models first
+        if hasattr(layer, "layers") and getattr(layer, "layers"):
+            try:
+                return _find_last_conv_layer_recursive(layer)
+            except ValueError:
+                continue
+        
+        # Check if this layer is a convolutional layer
+        if "Conv" in layer.__class__.__name__:
+            return layer
+    
+    # Try flattened layers if available
+    try:
+        for layer in reversed(list(model._flatten_layers())):
+            if "Conv" in layer.__class__.__name__:
+                return layer
+    except Exception:
+        pass
+    
+    raise ValueError("No convolutional layer found in the model")
+
+
+def make_gradcam_heatmap(img_array, model, last_conv_layer=None, pred_index=None):
+    """Generate Grad-CAM heatmap for a given image and model.
+    
+    Args:
+        img_array: Input image array (batch of 1), shape (1, H, W, C)
+        model: Full trained Keras model for classification
+        last_conv_layer: Conv layer object or layer name (string).
+                        If None, finds the last conv layer automatically.
+        pred_index: Target class index for gradient computation.
+                   If None, defaults to argmax(predictions).
+    
+    Returns:
+        heatmap: Normalized heatmap array, shape (H', W')
+                 where H', W' are conv output spatial dimensions.
+    
+    Raises:
+        ValueError: If no convolutional layer found or layer not in model.
+    """
     # Import TensorFlow lazily to avoid import-time side effects during tests
     import tensorflow as tf
 
-    # If last_conv_layer is passed as a string, retrieve the layer object recursively
+    # Resolve layer reference: string → layer object
     if isinstance(last_conv_layer, str):
-        def find_layer_by_name(m, name):
-            try:
-                return m.get_layer(name)
-            except ValueError:
-                pass
-            for layer in getattr(m, "layers", []):
-                if hasattr(layer, "layers"):
-                    res = find_layer_by_name(layer, name)
-                    if res is not None:
-                        return res
-            return None
-
-        layer_obj = find_layer_by_name(model, last_conv_layer)
+        layer_obj = _find_layer_by_name_recursive(model, last_conv_layer)
         if layer_obj is None:
-            raise ValueError(f"No layer named '{last_conv_layer}' found in the model.")
+            raise ValueError(
+                f"No layer named '{last_conv_layer}' found in the model. "
+                "Provide a valid layer name or layer object."
+            )
         last_conv_layer = layer_obj
+    elif last_conv_layer is None:
+        # Auto-find the last conv layer
+        try:
+            last_conv_layer = _find_last_conv_layer_recursive(model)
+        except ValueError:
+            raise ValueError(
+                "No convolutional layer found in the model. "
+                "Grad-CAM requires at least one Conv layer for gradient computation. "
+                "Provide an explicit last_conv_layer or ensure the model contains Conv layers."
+            )
 
-    # Ensure the model has been called/built on the input structure so that input/output nodes are initialized
+    # Ensure the model is built on the input structure
     try:
         _ = model(img_array)
     except Exception:
         pass
 
-    # 1. Identify if the last_conv_layer is nested inside a sub-model
-    sub_model = None
-    for layer in getattr(model, "layers", []):
-        if layer == last_conv_layer:
-            break
-        elif hasattr(layer, "layers") and any(l == last_conv_layer for l in getattr(layer, "layers", [])):
-            sub_model = layer
-            break
-
-    # 2. Reconstruct functional/sequential outputs accordingly
-    if sub_model is not None:
-        if not isinstance(sub_model, tf.keras.Sequential):
-            try:
-                sub_conv_output = last_conv_layer.output
-            except Exception:
-                try:
-                    sub_conv_output = last_conv_layer.outputs[0]
-                except Exception:
-                    sub_conv_output = last_conv_layer.get_output_at(0)
-
-            try:
-                sub_model_output = sub_model.output
-            except Exception:
-                try:
-                    sub_model_output = sub_model.outputs[0]
-                except Exception:
-                    sub_model_output = sub_model.get_output_at(0)
-
-            grad_sub_model = tf.keras.models.Model(
-                sub_model.inputs,
-                [sub_conv_output, sub_model_output]
+    # Get output tensors, handling both symbolic and non-symbolic outputs
+    try:
+        conv_output = last_conv_layer.output
+    except Exception:
+        try:
+            conv_output = last_conv_layer.outputs[0]
+        except Exception:
+            raise ValueError(
+                f"Unable to retrieve output tensor from layer '{last_conv_layer.name}'. "
+                "Ensure it is a properly configured Keras layer."
             )
-        else:
-            grad_sub_model = None
 
-        with tf.GradientTape() as tape:
-            current = img_array
-            conv_outputs = None
-            for layer in model.layers:
-                if layer == sub_model:
-                    if grad_sub_model is not None:
-                        conv_outputs, current = grad_sub_model(current)
-                    else:
-                        # Sequential sub-model execution
-                        for sub_layer in sub_model.layers:
-                            current = sub_layer(current)
-                            if sub_layer == last_conv_layer:
-                                conv_outputs = current
-                elif layer == last_conv_layer:
-                    current = layer(current)
-                    conv_outputs = current
-                else:
-                    current = layer(current)
-            predictions = current
-
-            if pred_index is None:
-                pred_index = tf.argmax(predictions[0])
-            class_channel = predictions[:, pred_index]
-
-    else:
-        # Fallback to standard flat model construction
+    try:
+        model_output = model.output
+    except Exception:
         try:
-            conv_output = last_conv_layer.output
+            model_output = model.outputs[0]
         except Exception:
-            try:
-                conv_output = last_conv_layer.outputs[0]
-            except Exception:
-                conv_output = last_conv_layer.get_output_at(0)
+            raise ValueError(
+                "Unable to retrieve output tensor from the model. "
+                "Ensure the model has a well-defined output."
+            )
 
-        try:
-            model_output = model.output
-        except Exception:
-            try:
-                model_output = model.outputs[0]
-            except Exception:
-                model_output = model.get_output_at(0)
-
+    # Build the Grad-CAM model: returns both conv output and final prediction
+    try:
         grad_model = tf.keras.models.Model(
             model.inputs,
-            [
-                conv_output,
-                model_output,
-            ],
+            [conv_output, model_output],
+        )
+    except Exception as e:
+        raise ValueError(
+            f"Failed to build Grad-CAM model with layer '{last_conv_layer.name}'. "
+            f"Error: {str(e)}"
         )
 
-        with tf.GradientTape() as tape:
-            conv_outputs, predictions = grad_model(img_array)
-            if pred_index is None:
-                pred_index = tf.argmax(predictions[0])
-            class_channel = predictions[:, pred_index]
+    # Forward pass and gradient computation
+    with tf.GradientTape() as tape:
+        conv_outputs, predictions = grad_model(img_array)
+        
+        # Determine target class index
+        if pred_index is None:
+            pred_index = tf.argmax(predictions[0])
+        
+        # Extract gradients of target class w.r.t. conv outputs
+        class_channel = predictions[:, pred_index]
 
+    # Compute gradients
     grads = tape.gradient(class_channel, conv_outputs)
+    
+    if grads is None:
+        raise ValueError(
+            f"Gradient computation failed for layer '{last_conv_layer.name}'. "
+            "Ensure the layer is connected to the model output and supports gradients."
+        )
+
+    # Apply spatial pooling of gradients and generate heatmap
     pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
     conv_outputs = conv_outputs[0]
     heatmap = conv_outputs @ pooled_grads[..., tf.newaxis]
     heatmap = tf.squeeze(heatmap)
-    heatmap = tf.maximum(heatmap, 0)
+    heatmap = tf.maximum(heatmap, 0)  # ReLU
+    
+    # Normalize heatmap to [0, 1]
     max_val = tf.math.reduce_max(heatmap)
     if max_val > 1e-10:
         heatmap = heatmap / max_val
+    
     return heatmap.numpy()
 
 

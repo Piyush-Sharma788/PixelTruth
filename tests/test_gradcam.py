@@ -6,6 +6,47 @@ from inference import find_last_conv_layer
 from gradcam import get_backbone_submodel, make_gradcam_heatmap
 
 
+def test_make_gradcam_heatmap_auto_find_conv_layer():
+    """Test that make_gradcam_heatmap auto-finds the last conv layer when not provided."""
+    # Create a simple model
+    inputs = tf.keras.Input(shape=(96, 96, 3))
+    x = tf.keras.layers.Conv2D(4, 3, activation="relu", name="auto_conv")(inputs)
+    x = tf.keras.layers.Flatten()(x)
+    outputs = tf.keras.layers.Dense(1, activation="sigmoid")(x)
+    model = tf.keras.Model(inputs=inputs, outputs=outputs)
+
+    img = np.zeros((1, 96, 96, 3), dtype=np.float32)
+    # Should work without passing last_conv_layer
+    heatmap = make_gradcam_heatmap(img, model)
+    assert heatmap.shape == (94, 94)
+    assert np.max(heatmap) <= 1.0
+    assert np.min(heatmap) >= 0.0
+
+
+def test_make_gradcam_heatmap_nested_backbone_auto_find():
+    """Test auto-find with nested backbone model."""
+    backbone = tf.keras.Sequential(
+        [
+            tf.keras.layers.Input(shape=(96, 96, 3)),
+            tf.keras.layers.Conv2D(4, 3, activation="relu", name="nested_auto_conv"),
+        ]
+    )
+    model = tf.keras.Sequential(
+        [
+            backbone,
+            tf.keras.layers.Flatten(),
+            tf.keras.layers.Dense(1, activation="sigmoid"),
+        ]
+    )
+
+    img = np.zeros((1, 96, 96, 3), dtype=np.float32)
+    # Should find the conv layer inside nested backbone
+    heatmap = make_gradcam_heatmap(img, model)
+    assert heatmap.shape == (94, 94)
+    assert np.max(heatmap) <= 1.0
+    assert np.min(heatmap) >= 0.0
+
+
 def test_find_last_conv_layer_nested_backbone():
     # 1. Create a nested backbone Sequential model
     backbone = tf.keras.Sequential(
@@ -92,6 +133,34 @@ def test_find_last_conv_layer_missing_raises_value_error():
     # 2. Verify find_last_conv_layer raises ValueError
     with pytest.raises(ValueError, match="No convolutional layer found"):
         find_last_conv_layer(model)
+
+
+def test_make_gradcam_heatmap_no_conv_layer_auto_find():
+    """Test that make_gradcam_heatmap raises clear error when no conv layer exists."""
+    model = tf.keras.Sequential(
+        [
+            tf.keras.layers.Input(shape=(96, 96, 3)),
+            tf.keras.layers.Flatten(),
+            tf.keras.layers.Dense(1, activation="sigmoid"),
+        ]
+    )
+
+    img = np.zeros((1, 96, 96, 3), dtype=np.float32)
+    with pytest.raises(ValueError, match="No convolutional layer found"):
+        make_gradcam_heatmap(img, model)
+
+
+def test_make_gradcam_heatmap_layer_not_found_by_name():
+    """Test that passing invalid layer name raises clear error."""
+    inputs = tf.keras.Input(shape=(96, 96, 3))
+    x = tf.keras.layers.Conv2D(4, 3, activation="relu", name="real_conv")(inputs)
+    x = tf.keras.layers.Flatten()(x)
+    outputs = tf.keras.layers.Dense(1, activation="sigmoid")(x)
+    model = tf.keras.Model(inputs=inputs, outputs=outputs)
+
+    img = np.zeros((1, 96, 96, 3), dtype=np.float32)
+    with pytest.raises(ValueError, match="No layer named"):
+        make_gradcam_heatmap(img, model, "non_existent_layer")
 
 
 def test_make_gradcam_heatmap_fallback_by_name():
@@ -246,3 +315,55 @@ def test_gradcam_end_to_end_pipeline():
     overlay = overlay_heatmap(fake_bgr, heatmap)
     assert overlay.shape == fake_bgr.shape
     assert overlay.dtype == np.uint8
+
+
+def test_gradcam_end_to_end_auto_find():
+    """Integration test: end-to-end with auto-find of conv layer."""
+    from gradcam import overlay_heatmap
+
+    # Build a realistic nested architecture
+    backbone = tf.keras.Sequential(
+        [
+            tf.keras.layers.Input(shape=(96, 96, 3)),
+            tf.keras.layers.Conv2D(8, 3, activation="relu", name="bb_conv1"),
+            tf.keras.layers.Conv2D(16, 3, activation="relu", name="bb_conv2"),
+        ],
+        name="backbone",
+    )
+    model = tf.keras.Sequential(
+        [
+            backbone,
+            tf.keras.layers.GlobalAveragePooling2D(),
+            tf.keras.layers.Dense(1, activation="sigmoid"),
+        ]
+    )
+
+    img = np.random.rand(1, 96, 96, 3).astype(np.float32)
+    # Should auto-find last conv layer and generate heatmap
+    heatmap = make_gradcam_heatmap(img, model)
+    assert heatmap.ndim == 2
+    assert np.min(heatmap) >= 0.0
+    assert np.max(heatmap) <= 1.0
+
+    # Overlay on a fake BGR image
+    fake_bgr = np.random.randint(0, 255, (96, 96, 3), dtype=np.uint8)
+    overlay = overlay_heatmap(fake_bgr, heatmap)
+    assert overlay.shape == fake_bgr.shape
+    assert overlay.dtype == np.uint8
+
+
+def test_gradcam_with_target_class_index():
+    """Test Grad-CAM generation with explicit target class index."""
+    inputs = tf.keras.Input(shape=(96, 96, 3))
+    x = tf.keras.layers.Conv2D(4, 3, activation="relu", name="conv_for_classes")(inputs)
+    x = tf.keras.layers.Flatten()(x)
+    outputs = tf.keras.layers.Dense(3, activation="softmax")(x)  # 3 classes
+    model = tf.keras.Model(inputs=inputs, outputs=outputs)
+
+    img = np.random.rand(1, 96, 96, 3).astype(np.float32)
+    # Generate heatmap for each class
+    for target_class in [0, 1, 2]:
+        heatmap = make_gradcam_heatmap(img, model, pred_index=target_class)
+        assert heatmap.ndim == 2
+        assert np.min(heatmap) >= 0.0
+        assert np.max(heatmap) <= 1.0

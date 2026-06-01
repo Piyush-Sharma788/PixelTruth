@@ -11,7 +11,7 @@ from preprocessing import (
 )
 import logging
 
-from gradcam import get_backbone_submodel, make_gradcam_heatmap, overlay_heatmap
+from gradcam import make_gradcam_heatmap, overlay_heatmap
 
 from exceptions import (
     PreprocessingError,
@@ -22,7 +22,6 @@ from inference import (
     preprocess_image,
     preprocess_uploaded_image as _preprocess_uploaded_image,
     predict_image as _predict_image,
-    find_last_conv_layer,
 )
 
 from metrics import (
@@ -360,17 +359,16 @@ with col_right:
             gradcam_image = None
 
             try:
-                # Dynamic lookup — avoids breaking Grad-CAM if model architecture changes
-                backbone_model = get_backbone_submodel(model)
-                last_conv_layer = find_last_conv_layer(backbone_model)
-                heatmap = make_gradcam_heatmap(
-                    processed_img,
-                    backbone_model,
-                    last_conv_layer
-                )
+                # Generate Grad-CAM visualization from the full model
+                # make_gradcam_heatmap will automatically find the last convolutional layer
+                heatmap = make_gradcam_heatmap(processed_img, model)
                 gradcam_image = overlay_heatmap(face_image, heatmap)
 
+            except ValueError as e:
+                # Structured error: missing conv layer or layer not found
+                logger.warning(f"Grad-CAM unavailable for {uploaded_file.name}: {str(e)}")
             except Exception as e:
+                # Unexpected error
                 logger.warning(f"Grad-CAM failed for {uploaded_file.name}: {e}", exc_info=True)
 
             batch_results.append({
