@@ -1,4 +1,8 @@
-import streamlit as st
+try:
+    import streamlit as st
+except ImportError:  # pragma: no cover
+    st = None
+
 import numpy as np
 import os
 
@@ -8,6 +12,12 @@ from model_utils import (
     get_model_url,
     get_model_sha256,
 )
+
+
+def _noop_cache_resource(func):
+    return func
+
+cache_resource = st.cache_resource if st is not None else _noop_cache_resource
 
 MODEL_PATH = get_model_path()
 MODEL_URL = get_model_url()
@@ -19,7 +29,6 @@ def get_model_mtime(model_path: str | None = None):
         return os.path.getmtime(model_path or MODEL_PATH)
     except OSError:
         return 0.0
-
 
 @st.cache_resource
 def load_cached_model(model_mtime=None, model_path: str | None = None):

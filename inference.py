@@ -114,3 +114,50 @@ def predict_image(model, image: np.ndarray) -> Tuple[Optional[str], Optional[flo
         raise
     except Exception as exc:
         raise ModelExecutionError(f"Model prediction failed: {exc}") from exc
+
+def predict_image_from_bytes(model, image_bytes: bytes) -> Tuple[Optional[str], Optional[float], Optional[np.ndarray]]:
+    """Run prediction directly from raw image bytes.
+
+    Combines preprocess_uploaded_image and predict_image in one call
+    so callers don't have to chain them manually.
+
+    Args:
+        model: Loaded Keras model or None.
+        image_bytes: Raw bytes of an encoded image file.
+
+    Returns:
+        Tuple of (label, confidence, processed_image), or
+        (None, None, None) if model is None.
+    """
+    if model is None:
+        return None, None, None
+
+    try:
+        processed = preprocess_uploaded_image(image_bytes)
+    except Exception as exc:
+        raise PreprocessingError(f"Preprocessing failed: {exc}") from exc
+
+    try:
+        prediction = model.predict(processed, verbose=0)
+        label, confidence = decode_prediction(prediction)
+        return label, confidence, processed
+    except ModelExecutionError:
+        raise
+    except Exception as exc:
+        raise ModelExecutionError(f"Model prediction failed: {exc}") from exc
+    
+def validate_model_output_shape(prediction: np.ndarray) -> None:
+    """Validate that model output shape is supported before decoding.
+
+    Args:
+        prediction: Raw output array from model.predict().
+
+    Raises:
+        ModelExecutionError: If output shape is not 1 or 2 classes.
+    """
+    scores = np.asarray(prediction).reshape(-1)
+    if scores.size not in (1, 2):
+        raise ModelExecutionError(
+            f"Unsupported model output shape: {np.asarray(prediction).shape}. "
+            f"Expected 1 (sigmoid) or 2 (softmax) outputs."
+        )

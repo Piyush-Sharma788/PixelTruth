@@ -12,14 +12,14 @@ import numpy as np
 
 from config import SUPPORTED_EXTENSIONS
 from exceptions import ModelExecutionError, PreprocessingError
-from preprocessing import preprocess_image_array, preprocess_image_bytes
+from preprocessing import preprocess_image_array, preprocess_image_bytes, decode_image_bytes, detect_and_crop_face
 from utils.model_loader import load_cached_model, get_model_mtime
 
 logger = logging.getLogger(__name__)
 
 
 def preprocess_image(image_input: str | Path | bytes | np.ndarray) -> np.ndarray:
-    """Return an RGB normalized batch for a path, raw bytes, or BGR array."""
+    """Return an RGB normalized batch for a path, raw bytes, or BGR array after face detection."""
     if isinstance(image_input, (str, Path)):
         image_path = Path(image_input)
         if not image_path.exists():
@@ -30,20 +30,18 @@ def preprocess_image(image_input: str | Path | bytes | np.ndarray) -> np.ndarray
                 f"Unsupported file extension '{image_path.suffix.lower()}'. "
                 f"Supported: {supported}"
             )
-        image_input = image_path.read_bytes()
+        raw_bytes = image_path.read_bytes()
+        bgr_image = decode_image_bytes(raw_bytes)
+    elif isinstance(image_input, bytes):
+        bgr_image = decode_image_bytes(image_input)
+    elif isinstance(image_input, np.ndarray):
+        bgr_image = image_input
+    else:
+        raise TypeError("image_input must be a file path, raw bytes, or numpy array.")
 
     try:
-        if isinstance(image_input, bytes):
-            return preprocess_image_bytes(image_input)
-
-        if isinstance(image_input, np.ndarray):
-            return preprocess_image_array(image_input)
-
-        raise TypeError("image_input must be a file path, raw bytes, or numpy array.")
-    except TypeError:
-        raise
-    except ValueError as exc:
-        raise PreprocessingError(f"Failed to preprocess image: {exc}") from exc
+        face_image, _ = detect_and_crop_face(bgr_image)
+        return preprocess_image_array(face_image)
     except Exception as exc:
         logger.error("Image preprocessing failed: %s", exc, exc_info=True)
         raise PreprocessingError(f"Failed to preprocess image: {exc}") from exc
@@ -77,7 +75,33 @@ def predict_image(
 ) -> dict:
     """Run deepfake detection and return a normalized result dictionary."""
     source_path = str(image_input) if isinstance(image_input, (str, Path)) else None
-    processed = preprocess_image(image_input)
+
+    # Get BGR image
+    if isinstance(image_input, (str, Path)):
+        image_path = Path(image_input)
+        if not image_path.exists():
+            raise FileNotFoundError(f"Image not found: {image_path}")
+        if image_path.suffix.lower() not in SUPPORTED_EXTENSIONS:
+            supported = ", ".join(sorted(SUPPORTED_EXTENSIONS))
+            raise ValueError(
+                f"Unsupported file extension '{image_path.suffix.lower()}'. "
+                f"Supported: {supported}"
+            )
+        raw_bytes = image_path.read_bytes()
+        bgr_image = decode_image_bytes(raw_bytes)
+    elif isinstance(image_input, bytes):
+        bgr_image = decode_image_bytes(image_input)
+    elif isinstance(image_input, np.ndarray):
+        bgr_image = image_input
+    else:
+        raise TypeError("image_input must be a file path, raw bytes, or numpy array.")
+
+    try:
+        face_image, face_box = detect_and_crop_face(bgr_image)
+        processed = preprocess_image_array(face_image)
+    except Exception as exc:
+        logger.error("Image preprocessing failed: %s", exc, exc_info=True)
+        raise PreprocessingError(f"Failed to preprocess image: {exc}") from exc
 
     try:
         model = load_cached_model(get_model_mtime(model_path), model_path=model_path)
@@ -94,6 +118,9 @@ def predict_image(
         "confidence": confidence,
         "raw": raw_scores,
         "processed_image": processed,
+        "face_detected": face_box is not None,
+        "face_box": face_box,
+        "face_image": face_image,
     }
     if source_path is not None:
         result["image"] = source_path
@@ -148,7 +175,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.output_json:
         serializable_results = [
-            {key: value for key, value in result.items() if key != "processed_image"}
+            {key: value for key, value in result.items() if key not in ("processed_image", "face_image")}
             for result in results
         ]
         output = (
