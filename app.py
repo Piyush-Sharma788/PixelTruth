@@ -10,6 +10,7 @@ from preprocessing import (
     preprocess_image_array,
 )
 import logging
+import hashlib
 
 from exif_analysis import extract_exif
 from gradcam import get_backbone_submodel, make_gradcam_heatmap, overlay_heatmap
@@ -135,6 +136,7 @@ st.markdown(custom_css, unsafe_allow_html=True)
 # ----------------------- CONFIDENCE THRESHOLD ------------------------
 
 LOW_CONFIDENCE_THRESHOLD = 0.70
+MAX_HISTORY_ENTRIES = 500
 
 # ----------------------- LOAD MODEL ------------------------
 
@@ -167,6 +169,14 @@ except Exception:
     pass
 
 _ = preprocess_image
+
+# Initialise prediction history containers in session state (one-time)
+if "prediction_history" not in st.session_state:
+    st.session_state.prediction_history = []
+if "prediction_history_hashes" not in st.session_state:
+    st.session_state.prediction_history_hashes = set()
+if "prediction_csv" not in st.session_state:
+    st.session_state.prediction_csv = None
 
 
 def predict_image(image):
@@ -400,12 +410,29 @@ with col_right:
                 "ela_score": ela_score,
             })
 
-            st.session_state.prediction_history.append({
-                "Filename": uploaded_file.name,
-                "Result": label,
-                "Confidence (%)": f"{confidence * 100:.1f}",
-                "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            })
+            # Record history with deduplication and bounded size
+            entry_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            entry_hash = hashlib.sha256(raw_bytes).hexdigest()
+            if entry_hash not in st.session_state.prediction_history_hashes:
+                history_entry = {
+                    "Filename": uploaded_file.name,
+                    "Result": label,
+                    "Confidence (%)": f"{confidence * 100:.1f}",
+                    "Timestamp": entry_timestamp,
+                    "_hash": entry_hash,
+                }
+                st.session_state.prediction_history.append(history_entry)
+                st.session_state.prediction_history_hashes.add(entry_hash)
+
+                # Trim oldest entries when exceeding cap
+                while len(st.session_state.prediction_history) > MAX_HISTORY_ENTRIES:
+                    old = st.session_state.prediction_history.pop(0)
+                    old_hash = old.get("_hash")
+                    if old_hash and old_hash in st.session_state.prediction_history_hashes:
+                        st.session_state.prediction_history_hashes.remove(old_hash)
+
+            # Invalidate prepared CSV when history mutates
+            st.session_state.prediction_csv = None
 
         progress_bar.empty()
 
@@ -580,17 +607,34 @@ if st.session_state.get("prediction_history"):
     st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
     st.subheader("🗂 Prediction History")
 
-    history_df = pd.DataFrame(st.session_state.prediction_history)
-    st.dataframe(history_df, use_container_width=True)
+    # Lightweight preview to avoid building a large DataFrame on every rerun
+    preview = st.session_state.prediction_history[-50:]
+    if preview:
+        preview_df = pd.DataFrame(preview)
+        st.dataframe(preview_df, use_container_width=True)
+    else:
+        st.write("No recent history to preview.")
 
-    csv_data = history_df.to_csv(index=False).encode("utf-8")
+    c1, c2 = st.columns([1, 1])
+    with c1:
+        if st.button("⬇️ Prepare CSV Report"):
+            full_df = pd.DataFrame(st.session_state.prediction_history)
+            st.session_state.prediction_csv = full_df.to_csv(index=False).encode("utf-8")
+            st.success("Report prepared — click Download to save the CSV.")
+    with c2:
+        if st.button("🧹 Clear History"):
+            st.session_state.prediction_history = []
+            st.session_state.prediction_history_hashes = set()
+            st.session_state.prediction_csv = None
+            st.success("Prediction history cleared.")
 
-    st.download_button(
-        label="⬇️ Download Report as CSV",
-        data=csv_data,
-        file_name=f"pixeltruth_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-        mime="text/csv",
-    )
+    if st.session_state.get("prediction_csv") is not None:
+        st.download_button(
+            label="⬇️ Download Report as CSV",
+            data=st.session_state.prediction_csv,
+            file_name=f"pixeltruth_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+            mime="text/csv",
+        )
 
     st.markdown("</div>", unsafe_allow_html=True)
 
