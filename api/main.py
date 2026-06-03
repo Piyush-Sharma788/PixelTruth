@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from fastapi import BackgroundTasks, FastAPI, UploadFile, File, HTTPException, Request
 import os
 from fastapi.middleware.cors import CORSMiddleware
@@ -51,7 +52,21 @@ async def _read_image_bytes(file: UploadFile) -> bytes:
 
 
 def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
-    retry_after = exc.detail.split()[-1] if exc.detail else "60"
+    retry_after = "60"
+    try:
+        limiter = getattr(request.app.state, "limiter", None)
+        view_rate_limit = getattr(request.state, "view_rate_limit", None)
+        if limiter and view_rate_limit:
+            limit_item, identifiers = view_rate_limit
+            stats = limiter.limiter.get_window_stats(limit_item, *identifiers)
+            reset_time = stats[0]
+            seconds_left = max(1, int(reset_time - time.time()))
+            retry_after = str(seconds_left)
+        elif exc.limit and hasattr(exc.limit, "limit") and hasattr(exc.limit.limit, "get_expiry"):
+            retry_after = str(exc.limit.limit.get_expiry())
+    except Exception:
+        pass
+
     return JSONResponse(
         status_code=429,
         content={"detail": "Rate limit exceeded. Try again later."},

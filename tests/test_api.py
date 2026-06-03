@@ -160,3 +160,59 @@ def test_async_detect_rejects_non_image(monkeypatch):
     )
 
     assert response.status_code == 400
+
+
+def test_rate_limit_handler_calculates_correct_retry_after():
+    from fastapi import Request
+    from slowapi.errors import RateLimitExceeded
+    from slowapi.wrappers import Limit
+    from limits import parse_many
+    import time
+
+    # Create a mock Request
+    class MockApp:
+        class state:
+            pass
+
+    class MockRequest:
+        def __init__(self):
+            self.app = MockApp()
+            self.state = MockApp.state()
+
+    req = MockRequest()
+
+    # Test case 1: when no state/limiter is available, fallback to get_expiry
+    limit_item = parse_many("5/minute")[0]
+    limit_wrapper = Limit(limit_item, lambda: "ip", None, False, None, None, None, 1, False)
+    exc = RateLimitExceeded(limit_wrapper)
+
+    response = api_main._rate_limit_exceeded_handler(req, exc)
+    assert response.status_code == 429
+    assert response.headers.get("Retry-After") == "60"
+
+    # Test case 2: when limiter and view_rate_limit are present
+    from limits.strategies import MovingWindowRateLimiter
+    from limits.storage import MemoryStorage
+
+    storage = MemoryStorage()
+    strategy = MovingWindowRateLimiter(storage)
+
+    class MockLimiter:
+        def __init__(self):
+            self.limiter = strategy
+
+    req.app.state.limiter = MockLimiter()
+
+    # Add a limit hit to the strategy
+    key = "127.0.0.1"
+    strategy.hit(limit_item, key)
+
+    req.state.view_rate_limit = (limit_item, [key])
+
+    response = api_main._rate_limit_exceeded_handler(req, exc)
+    assert response.status_code == 429
+    retry_after = response.headers.get("Retry-After")
+    assert retry_after is not None
+    assert int(retry_after) > 0
+    assert int(retry_after) <= 60
+
