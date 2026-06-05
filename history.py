@@ -18,12 +18,19 @@ def init_db(db_path=DB_PATH):
                 filename TEXT NOT NULL,
                 verdict TEXT NOT NULL,
                 confidence_pct REAL NOT NULL,
-                face_detected INTEGER NOT NULL DEFAULT 0
+                face_detected INTEGER NOT NULL DEFAULT 0,
+                file_hash TEXT
             )
         """)
+        # Ensure file_hash column exists even if table was created in an older version
+        try:
+            cursor.execute("ALTER TABLE predictions ADD COLUMN file_hash TEXT")
+        except sqlite3.OperationalError:
+            # Column already exists
+            pass
         conn.commit()
 
-def save_prediction(filename, verdict, confidence_pct, face_detected, db_path=DB_PATH):
+def save_prediction(filename, verdict, confidence_pct, face_detected, file_hash=None, db_path=DB_PATH):
     """
     Saves a single prediction to the database.
     """
@@ -31,9 +38,9 @@ def save_prediction(filename, verdict, confidence_pct, face_detected, db_path=DB
     with sqlite3.connect(db_path) as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO predictions (timestamp, filename, verdict, confidence_pct, face_detected)
-            VALUES (?, ?, ?, ?, ?)
-        """, (timestamp, filename, verdict, confidence_pct, face_detected))
+            INSERT INTO predictions (timestamp, filename, verdict, confidence_pct, face_detected, file_hash)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (timestamp, filename, verdict, confidence_pct, face_detected, file_hash))
         conn.commit()
 
 def load_history(limit=200, db_path=DB_PATH):
@@ -43,23 +50,46 @@ def load_history(limit=200, db_path=DB_PATH):
     """
     with sqlite3.connect(db_path) as conn:
         cursor = conn.cursor()
-        cursor.execute("""
-            SELECT filename, verdict, confidence_pct, timestamp, face_detected
-            FROM predictions
-            ORDER BY id DESC
-            LIMIT ?
-        """, (limit,))
-        rows = cursor.fetchall()
-
-    history = []
-    for row in rows:
-        history.append({
-            "Filename": row[0],
-            "Result": row[1],
-            "Confidence (%)": f"{row[2]:.1f}",
-            "Timestamp": row[3],
-            "Face Detected": bool(row[4])
-        })
+        # Check if file_hash column exists in the table to support old databases gracefully
+        cursor.execute("PRAGMA table_info(predictions)")
+        columns = [col[1] for col in cursor.fetchall()]
+        
+        if "file_hash" in columns:
+            cursor.execute("""
+                SELECT filename, verdict, confidence_pct, timestamp, face_detected, file_hash
+                FROM predictions
+                ORDER BY id DESC
+                LIMIT ?
+            """, (limit,))
+            rows = cursor.fetchall()
+            history = []
+            for row in rows:
+                history.append({
+                    "Filename": row[0],
+                    "Result": row[1],
+                    "Confidence (%)": f"{row[2]:.1f}",
+                    "Timestamp": row[3],
+                    "Face Detected": bool(row[4]),
+                    "_hash": row[5]
+                })
+        else:
+            cursor.execute("""
+                SELECT filename, verdict, confidence_pct, timestamp, face_detected
+                FROM predictions
+                ORDER BY id DESC
+                LIMIT ?
+            """, (limit,))
+            rows = cursor.fetchall()
+            history = []
+            for row in rows:
+                history.append({
+                    "Filename": row[0],
+                    "Result": row[1],
+                    "Confidence (%)": f"{row[2]:.1f}",
+                    "Timestamp": row[3],
+                    "Face Detected": bool(row[4]),
+                    "_hash": None
+                })
     return history
 
 def clear_history(db_path=DB_PATH):
@@ -70,3 +100,4 @@ def clear_history(db_path=DB_PATH):
         cursor = conn.cursor()
         cursor.execute("DELETE FROM predictions")
         conn.commit()
+

@@ -1,6 +1,8 @@
+import gc
 import os
 import sqlite3
 import tempfile
+import time
 import pytest
 from pathlib import Path
 
@@ -17,8 +19,14 @@ def temp_db():
     
     yield path
     
-    # Clean up after tests
-    os.unlink(path)
+    # Clean up after tests — retry to handle Windows SQLite file lock
+    gc.collect()
+    for _ in range(5):
+        try:
+            os.unlink(path)
+            break
+        except PermissionError:
+            time.sleep(0.1)
 
 def test_init_db_creates_table(temp_db):
     # Verify that the 'predictions' table exists
@@ -73,3 +81,21 @@ def test_load_limit_is_respected(temp_db):
     # The newest 5 would be img9 down to img5
     assert history[0]["Filename"] == "img9.jpg"
     assert history[-1]["Filename"] == "img5.jpg"
+
+def test_save_and_load_with_hash(temp_db):
+    save_prediction(
+        filename="hash_test.jpg",
+        verdict="Fake",
+        confidence_pct=88.2,
+        face_detected=0,
+        file_hash="abc123hashvalue",
+        db_path=temp_db
+    )
+    
+    history = load_history(db_path=temp_db)
+    assert len(history) == 1
+    assert history[0]["Filename"] == "hash_test.jpg"
+    assert history[0]["Result"] == "Fake"
+    assert history[0]["Confidence (%)"] == "88.2"
+    assert history[0]["Face Detected"] is False
+    assert history[0]["_hash"] == "abc123hashvalue"
