@@ -6,17 +6,28 @@ PENDING → RUNNING → COMPLETED | FAILED.
 The store is intentionally simple (dict + Lock) and lives in-process.
 For multi-worker or persistent deployments, swap this for a Redis or
 database-backed implementation.
+
+TTL-based expiry: completed/failed tasks are automatically pruned after
+TASK_TTL_SECONDS (default 300 s) to prevent unbounded memory growth.
 """
 
 from __future__ import annotations
 
 import threading
+import time
 import uuid
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
 from pydantic import BaseModel, Field
+
+# ---------------------------------------------------------------------------
+# Default task retention period (seconds). Override via PIXELTRUTH_TASK_TTL
+# environment variable.
+# ---------------------------------------------------------------------------
+import os as _os
+TASK_TTL_SECONDS: int = int(_os.getenv("PIXELTRUTH_TASK_TTL", "300"))
 
 
 class TaskStatus(str, Enum):
@@ -43,11 +54,26 @@ class TaskResult(BaseModel):
 
 
 class TaskStore:
-    """Thread-safe container for in-flight and completed tasks."""
+    """Thread-safe container for in-flight and completed tasks.
 
-    def __init__(self) -> None:
+    Tasks are automatically expired after ``TASK_TTL_SECONDS`` once they
+    reach a terminal state (COMPLETED or FAILED).  A lightweight background
+    daemon thread runs the sweep so the main event-loop is never blocked.
+    """
+
+    _TERMINAL = {TaskStatus.COMPLETED, TaskStatus.FAILED}
+
+    def __init__(self, ttl_seconds: int = TASK_TTL_SECONDS) -> None:
         self._lock = threading.Lock()
         self._tasks: dict[str, TaskResult] = {}
+        self._ttl = ttl_seconds
+        # Monotonic timestamps (seconds) for when a task became terminal
+        self._terminal_ts: dict[str, float] = {}
+        # Start background cleanup daemon
+        self._cleanup_thread = threading.Thread(
+            target=self._cleanup_loop, daemon=True, name="task-store-gc"
+        )
+        self._cleanup_thread.start()
 
     # -- public API ----------------------------------------------------------
 
@@ -89,8 +115,13 @@ class TaskStore:
                 task.confidence = result["confidence"]
                 task.raw_scores = result["raw"]
                 task.face_detected = result.get("face_detected", False)
-                task.face_box = list(result["face_box"]) if result.get("face_box") is not None else None
+                task.face_box = (
+                    list(result["face_box"])
+                    if result.get("face_box") is not None
+                    else None
+                )
                 task.completed_at = datetime.now(timezone.utc)
+                self._terminal_ts[task_id] = time.monotonic()
 
     def mark_failed(self, task_id: str, error: str) -> None:
         """Record an error message and mark FAILED."""
@@ -100,3 +131,25 @@ class TaskStore:
                 task.status = TaskStatus.FAILED
                 task.error = error
                 task.completed_at = datetime.now(timezone.utc)
+                self._terminal_ts[task_id] = time.monotonic()
+
+    # -- private helpers -----------------------------------------------------
+
+    def _cleanup_loop(self) -> None:
+        """Background daemon: sweep expired terminal tasks every 60 seconds."""
+        while True:
+            time.sleep(60)
+            self._evict_expired()
+
+    def _evict_expired(self) -> None:
+        """Remove tasks that have been terminal for longer than *ttl_seconds*."""
+        now = time.monotonic()
+        with self._lock:
+            expired = [
+                tid
+                for tid, ts in self._terminal_ts.items()
+                if (now - ts) >= self._ttl
+            ]
+            for tid in expired:
+                self._tasks.pop(tid, None)
+                self._terminal_ts.pop(tid, None)
