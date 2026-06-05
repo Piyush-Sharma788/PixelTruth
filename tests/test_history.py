@@ -73,3 +73,21 @@ def test_load_limit_is_respected(temp_db):
     # The newest 5 would be img9 down to img5
     assert history[0]["Filename"] == "img9.jpg"
     assert history[-1]["Filename"] == "img5.jpg"
+
+def test_save_and_load_with_hash(temp_db):
+    save_prediction(
+        filename="hash_test.jpg",
+        verdict="Fake",
+        confidence_pct=88.2,
+        face_detected=0,
+        file_hash="abc123hashvalue",
+        db_path=temp_db
+    )
+    
+    history = load_history(db_path=temp_db)
+    assert len(history) == 1
+    assert history[0]["Filename"] == "hash_test.jpg"
+    assert history[0]["Result"] == "Fake"
+    assert history[0]["Confidence (%)"] == "88.2"
+    assert history[0]["Face Detected"] is False
+    assert history[0]["_hash"] == "abc123hashvalue"
