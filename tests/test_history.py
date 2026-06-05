@@ -1,6 +1,8 @@
+import gc
 import os
 import sqlite3
 import tempfile
+import time
 import pytest
 from pathlib import Path
 
@@ -17,8 +19,14 @@ def temp_db():
     
     yield path
     
-    # Clean up after tests
-    os.unlink(path)
+    # Clean up after tests — retry to handle Windows SQLite file lock
+    gc.collect()
+    for _ in range(5):
+        try:
+            os.unlink(path)
+            break
+        except PermissionError:
+            time.sleep(0.1)
 
 def test_init_db_creates_table(temp_db):
     # Verify that the 'predictions' table exists

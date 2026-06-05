@@ -30,7 +30,7 @@ def get_model_mtime(model_path: str | None = None):
     except OSError:
         return 0.0
 
-@st.cache_resource
+@cache_resource
 def load_cached_model(model_mtime=None, model_path: str | None = None):
     """
     Loads TensorFlow model only once.

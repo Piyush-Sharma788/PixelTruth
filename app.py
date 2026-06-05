@@ -134,9 +134,26 @@ footer {
 
 st.markdown(custom_css, unsafe_allow_html=True)
 
-# ----------------------- CONFIDENCE THRESHOLD ------------------------
+# ----------------------- CONFIGURATION SIDEBAR -----------------------
 
-LOW_CONFIDENCE_THRESHOLD = 0.70
+st.sidebar.header("⚙️ Configuration")
+LOW_CONFIDENCE_THRESHOLD = st.sidebar.slider(
+    "Confidence Threshold",
+    min_value=0.50,
+    max_value=1.00,
+    value=0.70,
+    step=0.05,
+    help="Predictions with confidence below this threshold will be flagged as uncertain."
+)
+CALIBRATION_TEMPERATURE = st.sidebar.slider(
+    "Calibration Temperature (T)",
+    min_value=1.0,
+    max_value=3.0,
+    value=1.5,
+    step=0.1,
+    help="Higher values soften prediction confidence to correct model overconfidence (1.0 = raw prediction)."
+)
+
 MAX_HISTORY_ENTRIES = 500
 
 # ----------------------- LOAD MODEL ------------------------
@@ -333,6 +350,64 @@ with col_right:
 
             try:
                 raw_bytes = uploaded_file.read()
+                uploaded_file.seek(0)
+                file_hash = hashlib.sha256(raw_bytes).hexdigest()
+                uploaded_hashes.add(file_hash)
+                file_bytes_map[uploaded_file.name] = (raw_bytes, file_hash)
+            except Exception as e:
+                batch_errors.append((uploaded_file.name, f"Could not read file: {e}"))
+                continue
+
+        # Prune st.session_state.current_predictions to remove files that are no longer uploaded
+        st.session_state.current_predictions = {
+            h: res for h, res in st.session_state.current_predictions.items() if h in uploaded_hashes
+        }
+
+        # Determine which files need processing
+        files_to_process = [
+            name for name in file_bytes_map
+            if file_bytes_map[name][1] not in st.session_state.current_predictions
+        ]
+
+        progress_bar = None
+        if files_to_process:
+            progress_bar = st.progress(0, text="Analysing images…")
+
+        for idx, uploaded_file in enumerate(uploaded_files):
+            if uploaded_file.name not in file_bytes_map:
+                continue
+
+            raw_bytes, entry_hash = file_bytes_map[uploaded_file.name]
+
+            # Check if already processed
+            if entry_hash in st.session_state.current_predictions:
+                cached_res = st.session_state.current_predictions[entry_hash]
+                
+                # Dynamically apply temperature scaling to raw_prediction
+                from calibration import temperature_scale
+                from predict import decode_prediction
+                
+                calibrated_pred = temperature_scale(cached_res["raw_prediction"], temperature=CALIBRATION_TEMPERATURE)
+                label, confidence, raw_scores = decode_prediction(calibrated_pred)
+                
+                # Update dynamic fields
+                cached_res["label"] = label
+                cached_res["confidence"] = confidence
+                cached_res["raw"] = raw_scores
+                cached_res["is_uncertain"] = confidence < LOW_CONFIDENCE_THRESHOLD
+                
+                batch_results.append(cached_res)
+                continue
+
+            # Update progress bar if processing
+            if progress_bar is not None:
+                process_idx = files_to_process.index(uploaded_file.name)
+                progress_bar.progress(
+                    (process_idx + 1) / len(files_to_process),
+                    text=f"Analysing {uploaded_file.name} ({process_idx + 1}/{len(files_to_process)})…"
+                )
+
+            try:
                 exif_data = extract_exif(raw_bytes)
                 bgr_image = decode_image_bytes(raw_bytes)
 
@@ -364,10 +439,11 @@ with col_right:
                         3
                     )
 
-                prediction = predict_image(raw_bytes)
+                prediction = predict_image(raw_bytes, temperature=CALIBRATION_TEMPERATURE)
                 label = prediction["label"]
                 confidence = prediction["confidence"]
                 processed_img = prediction["processed_image"]
+                raw_pred_array = prediction["raw_prediction"]
 
             except PreprocessingError as e:
                 logger.error(f"PreprocessingError for {uploaded_file.name}: {e}", exc_info=True)
@@ -417,6 +493,7 @@ with col_right:
                 "filename": uploaded_file.name,
                 "label": label,
                 "confidence": confidence,
+                "raw_prediction": raw_pred_array,
                 "bgr_image": bgr_image,
                 "box_image": box_image,
                 "face_image": face_image,
