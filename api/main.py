@@ -96,9 +96,13 @@ task_store = TaskStore()
 
 
 def _format_inference_response(result: dict) -> dict:
+    from config import LOW_CONFIDENCE_THRESHOLD
+    confidence = result["confidence"]
     return {
         "verdict": result["label"],
-        "confidence": result["confidence"],
+        "confidence": round(confidence, 4),
+        "is_uncertain": confidence < LOW_CONFIDENCE_THRESHOLD,
+        "confidence_threshold": LOW_CONFIDENCE_THRESHOLD,
         "raw_scores": result["raw"],
         "face_detected": result.get("face_detected", False),
         "face_box": list(result["face_box"]) if result.get("face_box") is not None else None,
@@ -155,10 +159,13 @@ async def detect_image(request: Request, file: UploadFile = File(...)):
 
 
 @app.post("/api/detect/async", status_code=202)
+@limiter.limit(RATE_LIMIT)
 async def detect_image_async(
+    request: Request,
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
 ):
+    _verify_api_key(request)
     if not file.content_type or not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="Uploaded file must be an image.")
 
@@ -182,7 +189,8 @@ async def detect_image_async(
 
 
 @app.get("/api/task/{task_id}", response_model=TaskResult)
-async def get_task_status(task_id: str):
+async def get_task_status(task_id: str, request: Request):
+    _verify_api_key(request)
     task = task_store.get_task(task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found.")
