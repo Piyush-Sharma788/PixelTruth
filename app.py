@@ -134,9 +134,26 @@ footer {
 
 st.markdown(custom_css, unsafe_allow_html=True)
 
-# ----------------------- CONFIDENCE THRESHOLD ------------------------
+# ----------------------- CONFIGURATION SIDEBAR -----------------------
 
-LOW_CONFIDENCE_THRESHOLD = 0.70
+st.sidebar.header("⚙️ Configuration")
+LOW_CONFIDENCE_THRESHOLD = st.sidebar.slider(
+    "Confidence Threshold",
+    min_value=0.50,
+    max_value=1.00,
+    value=0.70,
+    step=0.05,
+    help="Predictions with confidence below this threshold will be flagged as uncertain."
+)
+CALIBRATION_TEMPERATURE = st.sidebar.slider(
+    "Calibration Temperature (T)",
+    min_value=1.0,
+    max_value=3.0,
+    value=1.5,
+    step=0.1,
+    help="Higher values soften prediction confidence to correct model overconfidence (1.0 = raw prediction)."
+)
+
 MAX_HISTORY_ENTRIES = 500
 
 # ----------------------- LOAD MODEL ------------------------
@@ -370,6 +387,20 @@ with col_right:
             # Check if already processed
             if entry_hash in st.session_state.current_predictions:
                 cached_res = st.session_state.current_predictions[entry_hash]
+                
+                # Dynamically apply temperature scaling to raw_prediction
+                from calibration import temperature_scale
+                from predict import decode_prediction
+                
+                calibrated_pred = temperature_scale(cached_res["raw_prediction"], temperature=CALIBRATION_TEMPERATURE)
+                label, confidence, raw_scores = decode_prediction(calibrated_pred)
+                
+                # Update dynamic fields
+                cached_res["label"] = label
+                cached_res["confidence"] = confidence
+                cached_res["raw"] = raw_scores
+                cached_res["is_uncertain"] = confidence < LOW_CONFIDENCE_THRESHOLD
+                
                 batch_results.append(cached_res)
                 continue
 
@@ -412,10 +443,11 @@ with col_right:
                         3
                     )
 
-                prediction = predict_image(raw_bytes)
+                prediction = predict_image(raw_bytes, temperature=CALIBRATION_TEMPERATURE)
                 label = prediction["label"]
                 confidence = prediction["confidence"]
                 processed_img = prediction["processed_image"]
+                raw_pred_array = prediction["raw_prediction"]
 
             except PreprocessingError as e:
                 logger.error(f"PreprocessingError for {uploaded_file.name}: {e}", exc_info=True)
@@ -465,6 +497,7 @@ with col_right:
                 "filename": uploaded_file.name,
                 "label": label,
                 "confidence": confidence,
+                "raw_prediction": raw_pred_array,
                 "bgr_image": bgr_image,
                 "box_image": box_image,
                 "face_image": face_image,
