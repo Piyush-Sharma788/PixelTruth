@@ -1,7 +1,7 @@
 import os
 import numpy as np
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timezone
 import streamlit as st
 from preprocessing import (
     decode_image_bytes,
@@ -505,7 +505,7 @@ with col_right:
                 "ela_score": ela_score,
             })
 
-            entry_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            entry_timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
             entry_hash = hashlib.sha256(raw_bytes).hexdigest()
 
             if entry_hash not in st.session_state.prediction_history_hashes:
@@ -749,7 +749,7 @@ if st.session_state.get("prediction_history"):
         st.download_button(
             label="⬇️ Download Report as CSV",
             data=st.session_state.prediction_csv,
-            file_name=f"pixeltruth_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+            file_name=f"pixeltruth_report_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.csv",
             mime="text/csv",
         )
 
