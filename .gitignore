@@ -14,3 +14,4 @@ metrics_cache.json
 !.github/workflows/*.yml
 
 .DS_Store
+pixeltruth_history.db

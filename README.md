@@ -11,7 +11,7 @@
 > **PixelTruth** is an AI-powered deepfake detection system for social media images. It uses a custom Convolutional Neural Network (CNN) with advanced preprocessing to classify images as **real or AI-generated** with **95% accuracy**.
 
 ---
-
+ ## Dataset download link -https://www.kaggle.com/datasets/xhlulu/140k-real-and-fake-faces
 ## 📌 Table of Contents
 
 - [About](#about)

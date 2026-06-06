@@ -11,6 +11,7 @@ from preprocessing import (
 import logging
 import hashlib
 
+from history import init_db, save_prediction, load_history, clear_history
 from exif_analysis import extract_exif
 from gradcam import get_backbone_submodel, make_gradcam_heatmap, overlay_heatmap
 from ela_analysis import compute_ela, ela_uniformity_score
@@ -133,9 +134,26 @@ footer {
 
 st.markdown(custom_css, unsafe_allow_html=True)
 
-# ----------------------- CONFIDENCE THRESHOLD ------------------------
+# ----------------------- CONFIGURATION SIDEBAR -----------------------
 
-LOW_CONFIDENCE_THRESHOLD = 0.70
+st.sidebar.header("⚙️ Configuration")
+LOW_CONFIDENCE_THRESHOLD = st.sidebar.slider(
+    "Confidence Threshold",
+    min_value=0.50,
+    max_value=1.00,
+    value=0.70,
+    step=0.05,
+    help="Predictions with confidence below this threshold will be flagged as uncertain."
+)
+CALIBRATION_TEMPERATURE = st.sidebar.slider(
+    "Calibration Temperature (T)",
+    min_value=1.0,
+    max_value=3.0,
+    value=1.5,
+    step=0.1,
+    help="Higher values soften prediction confidence to correct model overconfidence (1.0 = raw prediction)."
+)
+
 MAX_HISTORY_ENTRIES = 500
 
 # ----------------------- LOAD MODEL ------------------------
@@ -144,6 +162,7 @@ try:
     with st.spinner("Loading AI model..."):
         model = load_cached_model(get_model_mtime())
 
+    init_db()
     st.success("Model initialized successfully.")
 
 except Exception as e:
@@ -170,13 +189,29 @@ except Exception:
 
 _ = preprocess_image
 
-# Initialise prediction history containers in session state (one-time)
+# Initialise prediction history containers in session state
 if "prediction_history" not in st.session_state:
     st.session_state.prediction_history = []
+
 if "prediction_history_hashes" not in st.session_state:
     st.session_state.prediction_history_hashes = set()
+
 if "prediction_csv" not in st.session_state:
     st.session_state.prediction_csv = None
+
+# Load persisted history from DB once
+if "history_loaded_from_db" not in st.session_state:
+    try:
+        persisted_rows = load_history()
+
+        if persisted_rows and not st.session_state.prediction_history:
+            st.session_state.prediction_history = list(persisted_rows)[-MAX_HISTORY_ENTRIES:]
+
+        st.session_state.history_loaded_from_db = True
+
+    except Exception as e:
+        logger.warning(f"Could not load prediction history: {e}", exc_info=True)
+        st.session_state.history_loaded_from_db = True
 
 
 def predict_image(image):
@@ -297,9 +332,6 @@ with col_right:
         batch_results = []
         batch_errors = []
 
-        if "prediction_history" not in st.session_state:
-            st.session_state.prediction_history = []
-
         progress_bar = st.progress(0, text="Analysing images…")
 
         for idx, uploaded_file in enumerate(uploaded_files):
@@ -318,6 +350,64 @@ with col_right:
 
             try:
                 raw_bytes = uploaded_file.read()
+                uploaded_file.seek(0)
+                file_hash = hashlib.sha256(raw_bytes).hexdigest()
+                uploaded_hashes.add(file_hash)
+                file_bytes_map[uploaded_file.name] = (raw_bytes, file_hash)
+            except Exception as e:
+                batch_errors.append((uploaded_file.name, f"Could not read file: {e}"))
+                continue
+
+        # Prune st.session_state.current_predictions to remove files that are no longer uploaded
+        st.session_state.current_predictions = {
+            h: res for h, res in st.session_state.current_predictions.items() if h in uploaded_hashes
+        }
+
+        # Determine which files need processing
+        files_to_process = [
+            name for name in file_bytes_map
+            if file_bytes_map[name][1] not in st.session_state.current_predictions
+        ]
+
+        progress_bar = None
+        if files_to_process:
+            progress_bar = st.progress(0, text="Analysing images…")
+
+        for idx, uploaded_file in enumerate(uploaded_files):
+            if uploaded_file.name not in file_bytes_map:
+                continue
+
+            raw_bytes, entry_hash = file_bytes_map[uploaded_file.name]
+
+            # Check if already processed
+            if entry_hash in st.session_state.current_predictions:
+                cached_res = st.session_state.current_predictions[entry_hash]
+                
+                # Dynamically apply temperature scaling to raw_prediction
+                from calibration import temperature_scale
+                from predict import decode_prediction
+                
+                calibrated_pred = temperature_scale(cached_res["raw_prediction"], temperature=CALIBRATION_TEMPERATURE)
+                label, confidence, raw_scores = decode_prediction(calibrated_pred)
+                
+                # Update dynamic fields
+                cached_res["label"] = label
+                cached_res["confidence"] = confidence
+                cached_res["raw"] = raw_scores
+                cached_res["is_uncertain"] = confidence < LOW_CONFIDENCE_THRESHOLD
+                
+                batch_results.append(cached_res)
+                continue
+
+            # Update progress bar if processing
+            if progress_bar is not None:
+                process_idx = files_to_process.index(uploaded_file.name)
+                progress_bar.progress(
+                    (process_idx + 1) / len(files_to_process),
+                    text=f"Analysing {uploaded_file.name} ({process_idx + 1}/{len(files_to_process)})…"
+                )
+
+            try:
                 exif_data = extract_exif(raw_bytes)
                 bgr_image = decode_image_bytes(raw_bytes)
 
@@ -349,10 +439,11 @@ with col_right:
                         3
                     )
 
-                prediction = predict_image(raw_bytes)
+                prediction = predict_image(raw_bytes, temperature=CALIBRATION_TEMPERATURE)
                 label = prediction["label"]
                 confidence = prediction["confidence"]
                 processed_img = prediction["processed_image"]
+                raw_pred_array = prediction["raw_prediction"]
 
             except PreprocessingError as e:
                 logger.error(f"PreprocessingError for {uploaded_file.name}: {e}", exc_info=True)
@@ -372,14 +463,15 @@ with col_right:
             gradcam_image = None
 
             try:
-                # Dynamic lookup — avoids breaking Grad-CAM if model architecture changes
                 backbone_model = get_backbone_submodel(model)
                 last_conv_layer = find_last_conv_layer(backbone_model)
+
                 heatmap = make_gradcam_heatmap(
                     processed_img,
                     backbone_model,
                     last_conv_layer
                 )
+
                 gradcam_image = overlay_heatmap(face_image, heatmap)
 
             except Exception as e:
@@ -387,10 +479,13 @@ with col_right:
 
             ela_image = None
             ela_score = None
+
             try:
                 ela_image = compute_ela(raw_bytes)
+
                 if ela_image is not None:
                     ela_score = ela_uniformity_score(ela_image)
+
             except Exception as e:
                 logger.warning(f"ELA failed for {uploaded_file.name}: {e}")
 
@@ -398,6 +493,7 @@ with col_right:
                 "filename": uploaded_file.name,
                 "label": label,
                 "confidence": confidence,
+                "raw_prediction": raw_pred_array,
                 "bgr_image": bgr_image,
                 "box_image": box_image,
                 "face_image": face_image,
@@ -409,9 +505,9 @@ with col_right:
                 "ela_score": ela_score,
             })
 
-            # Record history with deduplication and bounded size
             entry_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             entry_hash = hashlib.sha256(raw_bytes).hexdigest()
+
             if entry_hash not in st.session_state.prediction_history_hashes:
                 history_entry = {
                     "Filename": uploaded_file.name,
@@ -420,17 +516,24 @@ with col_right:
                     "Timestamp": entry_timestamp,
                     "_hash": entry_hash,
                 }
+
                 st.session_state.prediction_history.append(history_entry)
                 st.session_state.prediction_history_hashes.add(entry_hash)
 
-                # Trim oldest entries when exceeding cap
+                save_prediction(
+                    filename=uploaded_file.name,
+                    verdict=label,
+                    confidence_pct=round(confidence * 100, 1),
+                    face_detected=int(face_detected),
+                )
+
                 while len(st.session_state.prediction_history) > MAX_HISTORY_ENTRIES:
                     old = st.session_state.prediction_history.pop(0)
                     old_hash = old.get("_hash")
+
                     if old_hash and old_hash in st.session_state.prediction_history_hashes:
                         st.session_state.prediction_history_hashes.remove(old_hash)
 
-            # Invalidate prepared CSV when history mutates
             st.session_state.prediction_csv = None
 
         progress_bar.empty()
@@ -525,12 +628,20 @@ with col_right:
                             "</div>",
                             unsafe_allow_html=True
                         )
+
                         ela_col1, ela_col2 = st.columns([1, 2])
+
                         with ela_col1:
-                            st.image(res["ela_image"], channels="BGR",
-                                     caption="ELA map", use_column_width=True)
+                            st.image(
+                                res["ela_image"],
+                                channels="BGR",
+                                caption="ELA map",
+                                use_column_width=True
+                            )
+
                         with ela_col2:
                             score = res["ela_score"]
+
                             if score is not None:
                                 if score > 0.75:
                                     ela_verdict = "🔴 High uniformity — AI pattern"
@@ -538,6 +649,7 @@ with col_right:
                                     ela_verdict = "🟡 Moderate uniformity — uncertain"
                                 else:
                                     ela_verdict = "🟢 Non-uniform — natural photo pattern"
+
                                 st.markdown(f"**ELA uniformity:** {ela_verdict}")
                                 st.progress(score)
                                 st.caption(
@@ -566,11 +678,12 @@ with col_right:
                     st.markdown(f"**Model prediction:** {res['label']}")
                     st.progress(res["confidence"])
                     st.caption(f"Confidence: {res['confidence'] * 100:.1f}%")
-                    
+
                     st.markdown("---")
                     st.markdown("#### 🔍 Metadata Analysis")
+
                     exif = res["exif"]
-                    
+
                     if exif["ai_software_detected"]:
                         exif_icon = "🔴"
                         label_text = f"AI software detected: {exif['software']}"
@@ -579,15 +692,17 @@ with col_right:
                         label_text = "No EXIF metadata"
                     else:
                         exif_icon = "🟢"
-                        label_text = f"Camera: {exif.get('make','')} {exif.get('model','')}".strip()
-                    
+                        label_text = f"Camera: {exif.get('make', '')} {exif.get('model', '')}".strip()
+
                     st.markdown(f"{exif_icon} **{label_text}**")
                     st.caption(exif["suspicion_reason"])
-                    
+
                     if exif["has_exif"] and exif["field_count"]:
-                        st.caption(f"{exif['field_count']} EXIF fields present"
-                                   + (" · GPS data present" if exif["gps_present"] else ""))
-                                   
+                        st.caption(
+                            f"{exif['field_count']} EXIF fields present"
+                            + (" · GPS data present" if exif["gps_present"] else "")
+                        )
+
                     st.markdown("</div>", unsafe_allow_html=True)
 
         if batch_errors:
@@ -606,8 +721,8 @@ if st.session_state.get("prediction_history"):
     st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
     st.subheader("🗂 Prediction History")
 
-    # Lightweight preview to avoid building a large DataFrame on every rerun
     preview = st.session_state.prediction_history[-50:]
+
     if preview:
         preview_df = pd.DataFrame(preview)
         st.dataframe(preview_df, use_container_width=True)
@@ -615,13 +730,16 @@ if st.session_state.get("prediction_history"):
         st.write("No recent history to preview.")
 
     c1, c2 = st.columns([1, 1])
+
     with c1:
         if st.button("⬇️ Prepare CSV Report"):
             full_df = pd.DataFrame(st.session_state.prediction_history)
             st.session_state.prediction_csv = full_df.to_csv(index=False).encode("utf-8")
             st.success("Report prepared — click Download to save the CSV.")
+
     with c2:
         if st.button("🧹 Clear History"):
+            clear_history()
             st.session_state.prediction_history = []
             st.session_state.prediction_history_hashes = set()
             st.session_state.prediction_csv = None
@@ -729,6 +847,7 @@ else:
                 use_container_width=True,
                 config={'scrollZoom': True, 'displayModeBar': True}
             )
+
             st.caption(get_confusion_matrix_caption())
 
     with col_roc:
@@ -740,6 +859,7 @@ else:
                 use_container_width=True,
                 config={'scrollZoom': True, 'displayModeBar': True}
             )
+
             st.caption(get_roc_curve_caption())
 
     st.markdown("<br>", unsafe_allow_html=True)
@@ -758,6 +878,7 @@ else:
                 use_container_width=True,
                 config={'scrollZoom': True, 'displayModeBar': True}
             )
+
             st.caption(get_dataset_distribution_caption())
 
     with col_stats:
