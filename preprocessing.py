@@ -114,7 +114,7 @@ def batch_preprocess(images: list[np.ndarray]) -> np.ndarray:
     return np.concatenate([preprocess_image_array(img) for img in images], axis=0)
 
 
-@lru_cache(maxsize=0)
+@lru_cache(maxsize=64)  # Bug #3 fix: maxsize=0 disables caching entirely; 64 caps memory at ~7 MB
 def decode_image_bytes(image_bytes: bytes) -> np.ndarray:
     """Decode raw bytes into a correctly oriented BGR numpy array."""
     _validate_compressed_image_dimensions(image_bytes)
@@ -133,7 +133,7 @@ def decode_image_bytes(image_bytes: bytes) -> np.ndarray:
         ) from exc
 
 
-@lru_cache(maxsize=0)
+@lru_cache(maxsize=64)  # Bug #3 fix: maxsize=0 disables caching entirely; 64 caps memory at ~7 MB
 def preprocess_image_bytes(image_bytes: bytes) -> np.ndarray:
     """Decode and preprocess bytes without retaining uploaded data in memory."""
     return preprocess_image_array(decode_image_bytes(image_bytes))
