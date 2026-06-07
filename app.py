@@ -329,6 +329,11 @@ with col_right:
         MAX_FILE_SIZE_MB = 10
         MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 
+        uploaded_hashes = set()
+        file_bytes_map = {}
+        if "current_predictions" not in st.session_state:
+            st.session_state.current_predictions = {}
+
         batch_results = []
         batch_errors = []
 
@@ -551,7 +556,6 @@ with col_right:
         if progress_bar is not None:
             progress_bar.empty()
 
-
         if batch_results:
             total = len(batch_results)
             n_real = sum(1 for r in batch_results if r["label"] == "Real")
@@ -650,7 +654,7 @@ with col_right:
                                 res["ela_image"],
                                 channels="BGR",
                                 caption="ELA map",
-                                use_column_width=True
+                                use_container_width=True
                             )
 
                         with ela_col2:
