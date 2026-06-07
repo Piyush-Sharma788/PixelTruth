@@ -188,8 +188,7 @@ def get_roc_curve_plot(cached_metrics: Optional[dict] = None) -> Optional[go.Fig
         logger.warning("ROC data is empty in metrics cache")
         return None
 
-    from sklearn.metrics import auc
-    roc_auc = auc(fpr, tpr)
+    roc_auc = float(np.trapz(tpr, fpr))
 
     fig = go.Figure()
 

@@ -13,3 +13,5 @@ fastapi>=0.100.0
 uvicorn>=0.23.0
 python-multipart>=0.0.6
 slowapi>=0.1.9
+pydantic==2.12.3
+pydantic-core==2.41.4

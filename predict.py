@@ -211,7 +211,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.output_json:
         serializable_results = [
-            {key: value for key, value in result.items() if key not in ("processed_image", "face_image")}
+            {key: value for key, value in result.items() if key not in ("processed_image", "face_image", "raw_prediction")}
             for result in results
         ]
         output = (

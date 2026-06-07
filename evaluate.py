@@ -33,13 +33,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
-from sklearn.metrics import (
-    accuracy_score,
-    classification_report,
-    confusion_matrix,
-    roc_curve,
-    auc,
-)
 
 from preprocessing import preprocess_image_from_path
 from config import SUPPORTED_EXTENSIONS
@@ -49,6 +42,98 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+
+def _safe_divide(numerator: float, denominator: float) -> float:
+    """Return ``numerator / denominator`` while guarding zero division."""
+    return float(numerator / denominator) if denominator else 0.0
+
+
+def _accuracy_score(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    """Return classification accuracy for aligned 1D label arrays."""
+    if y_true.size == 0:
+        return 0.0
+    return float(np.mean(y_true == y_pred))
+
+
+def _confusion_matrix(y_true: np.ndarray, y_pred: np.ndarray) -> np.ndarray:
+    """Return a 2x2 confusion matrix for binary labels ``0`` and ``1``."""
+    matrix = np.zeros((2, 2), dtype=int)
+    for true_label, pred_label in zip(y_true.astype(int), y_pred.astype(int)):
+        matrix[true_label, pred_label] += 1
+    return matrix
+
+
+def _classification_report(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
+    """Return the weighted-average metrics used by the evaluation output."""
+    total = int(y_true.size)
+    weighted_precision = 0.0
+    weighted_recall = 0.0
+    weighted_f1 = 0.0
+
+    for label in (0, 1):
+        true_positive = int(np.sum((y_true == label) & (y_pred == label)))
+        false_positive = int(np.sum((y_true != label) & (y_pred == label)))
+        false_negative = int(np.sum((y_true == label) & (y_pred != label)))
+        support = int(np.sum(y_true == label))
+
+        precision = _safe_divide(true_positive, true_positive + false_positive)
+        recall = _safe_divide(true_positive, true_positive + false_negative)
+        f1_score = _safe_divide(2 * precision * recall, precision + recall)
+
+        weighted_precision += precision * support
+        weighted_recall += recall * support
+        weighted_f1 += f1_score * support
+
+    if total == 0:
+        return {"weighted avg": {"precision": 0.0, "recall": 0.0, "f1-score": 0.0}}
+
+    return {
+        "weighted avg": {
+            "precision": weighted_precision / total,
+            "recall": weighted_recall / total,
+            "f1-score": weighted_f1 / total,
+        }
+    }
+
+
+def _roc_curve(y_true: np.ndarray, y_scores: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Compute FPR/TPR arrays for binary labels using descending score order."""
+    if y_true.size == 0:
+        return np.array([0.0, 1.0]), np.array([0.0, 1.0])
+
+    order = np.argsort(y_scores, kind="mergesort")[::-1]
+    sorted_true = y_true[order].astype(int)
+    sorted_scores = y_scores[order]
+
+    distinct_score_indices = np.where(np.diff(sorted_scores))[0]
+    threshold_indices = np.r_[distinct_score_indices, sorted_true.size - 1]
+
+    true_positives = np.cumsum(sorted_true == 1)[threshold_indices]
+    false_positives = (threshold_indices + 1) - true_positives
+
+    true_positives = np.r_[0, true_positives]
+    false_positives = np.r_[0, false_positives]
+
+    positive_count = int(np.sum(sorted_true == 1))
+    negative_count = int(np.sum(sorted_true == 0))
+
+    if positive_count == 0:
+        tpr = np.zeros_like(true_positives, dtype=float)
+    else:
+        tpr = true_positives / positive_count
+
+    if negative_count == 0:
+        fpr = np.zeros_like(false_positives, dtype=float)
+    else:
+        fpr = false_positives / negative_count
+
+    return fpr.astype(float), tpr.astype(float)
+
+
+def _auc(x_values: np.ndarray, y_values: np.ndarray) -> float:
+    """Compute the area under a curve using the trapezoidal rule."""
+    return float(np.trapz(y_values, x_values))
 
 
 # ---------------------------------------------------------------------------
@@ -188,18 +273,14 @@ def run_evaluation(
     y_scores = y_prob[:, 1]
 
     # 4. Compute metrics with scikit-learn
-    acc = float(accuracy_score(y_true_arr, y_pred))
+    acc = _accuracy_score(y_true_arr, y_pred)
 
-    report = classification_report(
-        y_true_arr, y_pred,
-        target_names=["Real", "Fake"],
-        output_dict=True,
-    )
+    report = _classification_report(y_true_arr, y_pred)
 
-    cm = confusion_matrix(y_true_arr, y_pred)
+    cm = _confusion_matrix(y_true_arr, y_pred)
 
-    fpr, tpr, _ = roc_curve(y_true_arr, y_scores)
-    roc_auc = float(auc(fpr, tpr))
+    fpr, tpr = _roc_curve(y_true_arr, y_scores)
+    roc_auc = _auc(fpr, tpr)
 
     # Per-class statistics
     n_real = int(np.sum(y_true_arr == 0))
