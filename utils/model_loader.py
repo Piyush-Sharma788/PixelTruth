@@ -1,8 +1,4 @@
-try:
-    import streamlit as st
-except ImportError:  # pragma: no cover
-    st = None
-
+import functools
 import numpy as np
 import os
 
@@ -14,10 +10,18 @@ from model_utils import (
 )
 
 
-def _noop_cache_resource(func):
-    return func
+def _memoize_cache_resource(func):
+    return functools.lru_cache(maxsize=1)(func)
 
-cache_resource = st.cache_resource if st is not None else _noop_cache_resource
+
+try:
+    import streamlit as st
+    if st is not None and hasattr(st, "runtime") and st.runtime.exists():
+        cache_resource = st.cache_resource
+    else:
+        cache_resource = _memoize_cache_resource
+except (ImportError, AttributeError):
+    cache_resource = _memoize_cache_resource
 
 MODEL_PATH = get_model_path()
 MODEL_URL = get_model_url()
