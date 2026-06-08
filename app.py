@@ -655,7 +655,7 @@ with col_right:
                                 res["ela_image"],
                                 channels="BGR",
                                 caption="ELA map",
-                                use_column_width=True
+                                use_container_width=True
                             )
 
                         with ela_col2:
