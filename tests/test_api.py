@@ -220,3 +220,137 @@ def test_rate_limit_handler_calculates_correct_retry_after():
     assert int(retry_after) > 0
     assert int(retry_after) <= 60
 
+
+def test_api_key_verification_enforced(monkeypatch):
+    # Set API_KEY in the module
+    monkeypatch.setattr(api_main, "API_KEY", "secret-key")
+    
+    # Mock predict_image
+    monkeypatch.setattr(
+        api_main,
+        "predict_image",
+        lambda _bytes: {"label": "Real", "confidence": 0.8, "raw": [0.8]},
+    )
+    
+    client = TestClient(api_main.app)
+    
+    # 1. Test POST /api/detect
+    # Missing key
+    response = client.post("/api/detect", files={"file": ("sample.png", b"data", "image/png")})
+    assert response.status_code == 401
+    
+    # Invalid key
+    response = client.post(
+        "/api/detect",
+        headers={"X-API-Key": "wrong-key"},
+        files={"file": ("sample.png", b"data", "image/png")},
+    )
+    assert response.status_code == 401
+    
+    # Valid key
+    response = client.post(
+        "/api/detect",
+        headers={"X-API-Key": "secret-key"},
+        files={"file": ("sample.png", b"data", "image/png")},
+    )
+    assert response.status_code == 200
+    
+    # 2. Test POST /api/detect/async
+    # Missing key
+    response = client.post("/api/detect/async", files={"file": ("sample.png", b"data", "image/png")})
+    assert response.status_code == 401
+    
+    # Invalid key
+    response = client.post(
+        "/api/detect/async",
+        headers={"X-API-Key": "wrong-key"},
+        files={"file": ("sample.png", b"data", "image/png")},
+    )
+    assert response.status_code == 401
+    
+    # Valid key
+    response = client.post(
+        "/api/detect/async",
+        headers={"X-API-Key": "secret-key"},
+        files={"file": ("sample.png", b"data", "image/png")},
+    )
+    assert response.status_code == 202
+    
+    # 3. Test GET /api/task/{task_id}
+    # Missing key
+    response = client.get("/api/task/some-task-id")
+    assert response.status_code == 401
+    
+    # Invalid key
+    response = client.get("/api/task/some-task-id", headers={"X-API-Key": "wrong-key"})
+    assert response.status_code == 401
+    
+    # Valid key (task doesn't exist, should return 404 instead of 401)
+    response = client.get("/api/task/some-task-id", headers={"X-API-Key": "secret-key"})
+    assert response.status_code == 404
+
+
+def test_rate_limiting_is_enforced(monkeypatch):
+    # Disable API key auth
+    monkeypatch.setattr(api_main, "API_KEY", "")
+    
+    # Mock predict_image
+    monkeypatch.setattr(
+        api_main,
+        "predict_image",
+        lambda _bytes: {"label": "Real", "confidence": 0.8, "raw": [0.8]},
+    )
+    
+    # Clear the limiter's storage before the test
+    api_main.limiter.limiter.storage.reset()
+    
+    client = TestClient(api_main.app)
+    
+    # Send 10 requests, which is the default limit (10/minute)
+    for _ in range(10):
+        response = client.post(
+            "/api/detect",
+            files={"file": ("sample.png", b"data", "image/png")},
+        )
+        assert response.status_code == 200
+        
+    # The 11th request should exceed the limit and return 429
+    response = client.post(
+        "/api/detect",
+        files={"file": ("sample.png", b"data", "image/png")},
+    )
+    assert response.status_code == 429
+    assert "Rate limit exceeded" in response.json()["detail"]
+    
+    # Clear the limiter storage again so it doesn't affect other tests
+    api_main.limiter.limiter.storage.reset()
+
+
+def test_rate_limiting_is_enforced_async(monkeypatch):
+    # Disable API key auth
+    monkeypatch.setattr(api_main, "API_KEY", "")
+    
+    # Clear the limiter's storage before the test
+    api_main.limiter.limiter.storage.reset()
+    
+    client = TestClient(api_main.app)
+    
+    # Send 10 requests to /api/detect/async
+    for _ in range(10):
+        response = client.post(
+            "/api/detect/async",
+            files={"file": ("sample.png", b"data", "image/png")},
+        )
+        assert response.status_code == 202
+        
+    # The 11th request should exceed the limit and return 429
+    response = client.post(
+        "/api/detect/async",
+        files={"file": ("sample.png", b"data", "image/png")},
+    )
+    assert response.status_code == 429
+    assert "Rate limit exceeded" in response.json()["detail"]
+    
+    # Clear the limiter storage again
+    api_main.limiter.limiter.storage.reset()
+
