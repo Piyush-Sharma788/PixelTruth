@@ -203,6 +203,9 @@ if "prediction_history_hashes" not in st.session_state:
 if "prediction_csv" not in st.session_state:
     st.session_state.prediction_csv = None
 
+if "current_predictions" not in st.session_state:
+    st.session_state.current_predictions = {}
+
 # Load persisted history from DB once
 if "history_loaded_from_db" not in st.session_state:
     try:
@@ -352,6 +355,8 @@ with col_right:
 
         batch_results = []
         batch_errors = []
+        uploaded_hashes: set = set()
+        file_bytes_map: dict = {}
 
         # Guard: initialise accumulators used across both loops below
         uploaded_hashes: set = set()
