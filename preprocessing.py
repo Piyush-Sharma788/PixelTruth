@@ -17,6 +17,31 @@ MIN_IMAGE_DIM = 10
 MAX_PIXELS_ENV = "PIXELTRUTH_MAX_PIXELS"
 DEFAULT_MAX_PIXELS = 25_000_000
 
+# ---------------------------------------------------------------------------
+# Byte-decode cache
+# lru_cache(maxsize=0) is a zero-capacity cache — nothing is ever stored.
+# Use a small positive bound so repeated calls with the same bytes object
+# (e.g. ELA + EXIF + inference in the same request) hit the cache instead of
+# fully re-decoding, while preventing unbounded memory growth under sustained
+# async load.  Override via PIXELTRUTH_DECODE_CACHE_SIZE (default: 8).
+# ---------------------------------------------------------------------------
+_DECODE_CACHE_SIZE_ENV = "PIXELTRUTH_DECODE_CACHE_SIZE"
+_DEFAULT_DECODE_CACHE_SIZE = 8
+
+
+def _get_decode_cache_size() -> int:
+    raw = os.getenv(_DECODE_CACHE_SIZE_ENV, "").strip()
+    if not raw:
+        return _DEFAULT_DECODE_CACHE_SIZE
+    try:
+        value = int(raw)
+        return value if value > 0 else _DEFAULT_DECODE_CACHE_SIZE
+    except ValueError:
+        return _DEFAULT_DECODE_CACHE_SIZE
+
+
+DECODE_CACHE_SIZE: int = _get_decode_cache_size()
+
 
 def _get_max_pixels() -> int:
     """Read the pixel cap from the env var, fall back to the default."""
@@ -114,9 +139,14 @@ def batch_preprocess(images: list[np.ndarray]) -> np.ndarray:
     return np.concatenate([preprocess_image_array(img) for img in images], axis=0)
 
 
-@lru_cache(maxsize=64)
+@lru_cache(maxsize=DECODE_CACHE_SIZE)
 def decode_image_bytes(image_bytes: bytes) -> np.ndarray:
-    """Decode raw bytes into a correctly oriented BGR numpy array."""
+    """Decode raw bytes into a correctly oriented BGR numpy array.
+
+    Results are cached up to DECODE_CACHE_SIZE entries (default 8, overridable
+    via PIXELTRUTH_DECODE_CACHE_SIZE) so that repeated calls within the same
+    request pipeline (ELA, EXIF, inference) skip redundant decoding.
+    """
     _validate_compressed_image_dimensions(image_bytes)
 
     try:
@@ -133,9 +163,13 @@ def decode_image_bytes(image_bytes: bytes) -> np.ndarray:
         ) from exc
 
 
-@lru_cache(maxsize=64)
+@lru_cache(maxsize=DECODE_CACHE_SIZE)
 def preprocess_image_bytes(image_bytes: bytes) -> np.ndarray:
-    """Decode and preprocess bytes without retaining uploaded data in memory."""
+    """Decode and preprocess bytes, caching up to DECODE_CACHE_SIZE results.
+
+    Uses the same cache bound as decode_image_bytes to avoid redundant
+    preprocessing calls within the same request.
+    """
     return preprocess_image_array(decode_image_bytes(image_bytes))
 
 
