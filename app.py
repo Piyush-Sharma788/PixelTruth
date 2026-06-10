@@ -373,7 +373,8 @@ with col_right:
                 "Timestamp":        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             })
 
-        progress_bar.empty()
+        if progress_bar is not None:
+            progress_bar.empty()
 
         if batch_results:
 
