@@ -1,4 +1,4 @@
-import streamlit as st
+import functools
 import numpy as np
 import os
 
@@ -8,6 +8,20 @@ from model_utils import (
     get_model_url,
     get_model_sha256,
 )
+
+
+def _memoize_cache_resource(func):
+    return functools.lru_cache(maxsize=1)(func)
+
+
+try:
+    import streamlit as st
+    if st is not None and hasattr(st, "runtime") and st.runtime.exists():
+        cache_resource = st.cache_resource
+    else:
+        cache_resource = _memoize_cache_resource
+except (ImportError, AttributeError):
+    cache_resource = _memoize_cache_resource
 
 MODEL_PATH = get_model_path()
 MODEL_URL = get_model_url()
@@ -20,8 +34,7 @@ def get_model_mtime(model_path: str | None = None):
     except OSError:
         return 0.0
 
-
-@st.cache_resource
+@cache_resource
 def load_cached_model(model_mtime=None, model_path: str | None = None):
     """
     Loads TensorFlow model only once.

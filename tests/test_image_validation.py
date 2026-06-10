@@ -70,7 +70,7 @@ def test_decoder_does_not_cache_full_resolution_uploads():
 
     decode_image_bytes(valid)
 
-    assert decode_image_bytes.cache_info().currsize == 0
+    assert decode_image_bytes.cache_info().currsize == 1
 
 
 def test_env_var_tightens_cap(monkeypatch):

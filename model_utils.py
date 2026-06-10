@@ -73,6 +73,29 @@ def download_model_file(url: str, destination_path: str) -> str:
     return str(destination)
 
 
+
+def _verify_sha256(file_path: str, expected: str) -> None:
+    """Verify a downloaded file matches the expected SHA-256 digest.
+
+    Raises ModelDownloadError and deletes the file if the digest does not match.
+    CWE-494/345 fix: ensure model integrity against supply-chain attacks.
+    """
+    import hashlib
+    sha256 = hashlib.sha256()
+    with open(file_path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(65536), b""):
+            sha256.update(chunk)
+    actual = sha256.hexdigest()
+    if actual.lower() != expected.lower():
+        import os as _os
+        _os.remove(file_path)
+        raise ModelDownloadError(
+            f"SHA-256 mismatch for downloaded model.\n"
+            f"  expected : {expected!r}\n"
+            f"  actual   : {actual!r}\n"
+            "File deleted — possible supply-chain attack or corrupted download."
+        )
+
 def ensure_model_file(
     model_path: str | None = None,
     model_url: str | None = None,

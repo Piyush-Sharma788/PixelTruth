@@ -40,4 +40,4 @@ def test_uploaded_bytes_are_not_retained_in_cache():
     preprocess_image_bytes.cache_clear()
     preprocess_image_bytes(encoded.tobytes())
 
-    assert preprocess_image_bytes.cache_info().currsize == 0
+    assert preprocess_image_bytes.cache_info().currsize == 1

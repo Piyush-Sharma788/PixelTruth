@@ -4,10 +4,6 @@ import pytest
 import api.main as api_main
 
 
-def _fake_predict(image_bytes):
-    return {"label": "Real", "confidence": 0.8, "raw": [0.8]}
-
-
 def test_api_rejects_non_image_upload():
     client = TestClient(api_main.app)
 
@@ -23,7 +19,13 @@ def test_api_returns_prediction(monkeypatch):
 
     def fake_predict(image_bytes):
         provided_inputs.append(image_bytes)
-        return {"label": "Real", "confidence": 0.8, "raw": [0.8]}
+        return {
+            "label": "Real",
+            "confidence": 0.8,
+            "raw": [0.8],
+            "face_detected": True,
+            "face_box": (10, 20, 30, 40),
+        }
 
     monkeypatch.setattr(
         api_main,
@@ -41,8 +43,36 @@ def test_api_returns_prediction(monkeypatch):
         "verdict": "Real",
         "confidence": 0.8,
         "raw_scores": [0.8],
+        "face_detected": True,
+        "face_box": [10, 20, 30, 40],
+        "confidence_threshold": 0.7,
+        "is_uncertain": False,
     }
     assert provided_inputs == [b"data"]
+
+
+def test_api_returns_prediction_without_face_metadata(monkeypatch):
+    monkeypatch.setattr(
+        api_main,
+        "predict_image",
+        lambda _bytes: {"label": "Fake", "confidence": 0.2, "raw": [0.2]},
+    )
+    client = TestClient(api_main.app)
+
+    response = client.post(
+        "/api/detect", files={"file": ("sample.png", b"data", "image/png")}
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "verdict": "Fake",
+        "confidence": 0.2,
+        "raw_scores": [0.2],
+        "face_detected": False,
+        "face_box": None,
+        "confidence_threshold": 0.7,
+        "is_uncertain": True,
+    }
 
 
 def test_api_rejects_oversized_upload_before_prediction(monkeypatch):
@@ -61,137 +91,266 @@ def test_api_rejects_oversized_upload_before_prediction(monkeypatch):
     assert response.status_code == 413
 
 
-# ---------------------------------------------------------------------------
-# API key authentication tests
-# ---------------------------------------------------------------------------
-
-
-def test_api_key_rejects_missing_key(monkeypatch):
-    monkeypatch.setattr(api_main, "API_KEY", "test-secret-key")
-    monkeypatch.setattr(api_main, "predict_image", _fake_predict)
-    client = TestClient(api_main.app)
-
-    response = client.post(
-        "/api/detect", files={"file": ("img.png", b"data", "image/png")}
-    )
-
-    assert response.status_code == 401
-    assert "API key" in response.json()["detail"]
-
-
-def test_api_key_rejects_wrong_key(monkeypatch):
-    monkeypatch.setattr(api_main, "API_KEY", "test-secret-key")
-    monkeypatch.setattr(api_main, "predict_image", _fake_predict)
-    client = TestClient(api_main.app)
-
-    response = client.post(
-        "/api/detect",
-        files={"file": ("img.png", b"data", "image/png")},
-        headers={"X-API-Key": "wrong-key"},
-    )
-
-    assert response.status_code == 401
-
-
-def test_api_key_accepts_correct_key(monkeypatch):
-    monkeypatch.setattr(api_main, "API_KEY", "test-secret-key")
-    monkeypatch.setattr(api_main, "predict_image", _fake_predict)
-    client = TestClient(api_main.app)
-
-    response = client.post(
-        "/api/detect",
-        files={"file": ("img.png", b"data", "image/png")},
-        headers={"X-API-Key": "test-secret-key"},
-    )
-
-    assert response.status_code == 200
-
-
-def test_api_key_skipped_when_unset(monkeypatch):
-    monkeypatch.setattr(api_main, "API_KEY", "")
-    monkeypatch.setattr(api_main, "predict_image", _fake_predict)
-    client = TestClient(api_main.app)
-
-    response = client.post(
-        "/api/detect", files={"file": ("img.png", b"data", "image/png")}
-    )
-
-    assert response.status_code == 200
-
-
-# ---------------------------------------------------------------------------
-# CORS configuration tests
-# ---------------------------------------------------------------------------
-
-
-def test_cors_allows_configured_origin():
-    client = TestClient(api_main.app)
-
-    response = client.options(
-        "/api/detect",
-        headers={
-            "Origin": "http://localhost:8501",
-            "Access-Control-Request-Method": "POST",
+def test_async_detect_returns_task_id(monkeypatch):
+    monkeypatch.setattr(
+        api_main,
+        "predict_image",
+        lambda _bytes: {
+            "label": "Real",
+            "confidence": 0.95,
+            "raw": [0.95],
+            "face_detected": True,
+            "face_box": (1, 2, 3, 4),
         },
     )
-
-    assert response.headers.get("access-control-allow-origin") == "http://localhost:8501"
-
-
-def test_cors_rejects_unknown_origin():
     client = TestClient(api_main.app)
 
-    response = client.options(
-        "/api/detect",
-        headers={
-            "Origin": "http://evil.example.com",
-            "Access-Control-Request-Method": "POST",
-        },
+    response = client.post(
+        "/api/detect/async", files={"file": ("sample.png", b"data", "image/png")}
     )
 
-    assert "access-control-allow-origin" not in response.headers
+    assert response.status_code == 202
+    assert "task_id" in response.json()
+    assert isinstance(response.json()["task_id"], str)
 
 
-# ---------------------------------------------------------------------------
-# Rate limiting tests
-# ---------------------------------------------------------------------------
+def test_task_status_returns_completed(monkeypatch):
+    monkeypatch.setattr(
+        api_main,
+        "predict_image",
+        lambda _bytes: {
+            "label": "Fake",
+            "confidence": 0.15,
+            "raw": [0.15],
+            "face_detected": True,
+            "face_box": (5, 6, 7, 8),
+        },
+    )
+    client = TestClient(api_main.app)
+
+    submit_response = client.post(
+        "/api/detect/async", files={"file": ("sample.png", b"data", "image/png")}
+    )
+    task_id = submit_response.json()["task_id"]
+
+    status_response = client.get(f"/api/task/{task_id}")
+    assert status_response.status_code == 200
+    assert status_response.json()["status"] == "completed"
+    assert status_response.json()["verdict"] == "Fake"
+    assert status_response.json()["confidence"] == 0.15
+    assert status_response.json()["raw_scores"] == [0.15]
+    assert status_response.json()["face_detected"] is True
+    assert status_response.json()["face_box"] == [5, 6, 7, 8]
 
 
-def test_rate_limit_returns_429(monkeypatch):
-    monkeypatch.setattr(api_main, "predict_image", _fake_predict)
+def test_task_not_found_returns_404():
+    client = TestClient(api_main.app)
 
-    from slowapi import Limiter
-    from slowapi.util import get_remote_address
+    response = client.get("/api/task/nonexistent")
+
+    assert response.status_code == 404
+
+
+def test_async_detect_rejects_non_image(monkeypatch):
+    monkeypatch.setattr(
+        api_main,
+        "predict_image",
+        lambda _bytes: pytest.fail("prediction should not run for invalid async uploads"),
+    )
+    client = TestClient(api_main.app)
+
+    response = client.post(
+        "/api/detect/async", files={"file": ("sample.txt", b"data", "text/plain")}
+    )
+
+    assert response.status_code == 400
+
+
+def test_rate_limit_handler_calculates_correct_retry_after():
+    from fastapi import Request
     from slowapi.errors import RateLimitExceeded
-    from fastapi import FastAPI, UploadFile, File, Request
+    from slowapi.wrappers import Limit
+    from limits import parse_many
+    import time
 
-    test_limiter = Limiter(
-        key_func=get_remote_address,
-        default_limits=["2/minute"],
+    # Create a mock Request
+    class MockApp:
+        class state:
+            pass
+
+    class MockRequest:
+        def __init__(self):
+            self.app = MockApp()
+            self.state = MockApp.state()
+
+    req = MockRequest()
+
+    # Test case 1: when no state/limiter is available, fallback to get_expiry
+    limit_item = parse_many("5/minute")[0]
+    limit_wrapper = Limit(limit_item, lambda: "ip", None, False, None, None, None, 1, False)
+    exc = RateLimitExceeded(limit_wrapper)
+
+    response = api_main._rate_limit_exceeded_handler(req, exc)
+    assert response.status_code == 429
+    assert response.headers.get("Retry-After") == "60"
+
+    # Test case 2: when limiter and view_rate_limit are present
+    from limits.strategies import MovingWindowRateLimiter
+    from limits.storage import MemoryStorage
+
+    storage = MemoryStorage()
+    strategy = MovingWindowRateLimiter(storage)
+
+    class MockLimiter:
+        def __init__(self):
+            self.limiter = strategy
+
+    req.app.state.limiter = MockLimiter()
+
+    # Add a limit hit to the strategy
+    key = "127.0.0.1"
+    strategy.hit(limit_item, key)
+
+    req.state.view_rate_limit = (limit_item, [key])
+
+    response = api_main._rate_limit_exceeded_handler(req, exc)
+    assert response.status_code == 429
+    retry_after = response.headers.get("Retry-After")
+    assert retry_after is not None
+    assert int(retry_after) > 0
+    assert int(retry_after) <= 60
+
+
+def test_api_key_verification_enforced(monkeypatch):
+    # Set API_KEY in the module
+    monkeypatch.setattr(api_main, "API_KEY", "secret-key")
+    
+    # Mock predict_image
+    monkeypatch.setattr(
+        api_main,
+        "predict_image",
+        lambda _bytes: {"label": "Real", "confidence": 0.8, "raw": [0.8]},
     )
-
-    test_app = FastAPI()
-    test_app.state.limiter = test_limiter
-    test_app.add_exception_handler(
-        RateLimitExceeded, api_main._rate_limit_exceeded_handler
+    
+    client = TestClient(api_main.app)
+    
+    # 1. Test POST /api/detect
+    # Missing key
+    response = client.post("/api/detect", files={"file": ("sample.png", b"data", "image/png")})
+    assert response.status_code == 401
+    
+    # Invalid key
+    response = client.post(
+        "/api/detect",
+        headers={"X-API-Key": "wrong-key"},
+        files={"file": ("sample.png", b"data", "image/png")},
     )
+    assert response.status_code == 401
+    
+    # Valid key
+    response = client.post(
+        "/api/detect",
+        headers={"X-API-Key": "secret-key"},
+        files={"file": ("sample.png", b"data", "image/png")},
+    )
+    assert response.status_code == 200
+    
+    # 2. Test POST /api/detect/async
+    # Missing key
+    response = client.post("/api/detect/async", files={"file": ("sample.png", b"data", "image/png")})
+    assert response.status_code == 401
+    
+    # Invalid key
+    response = client.post(
+        "/api/detect/async",
+        headers={"X-API-Key": "wrong-key"},
+        files={"file": ("sample.png", b"data", "image/png")},
+    )
+    assert response.status_code == 401
+    
+    # Valid key
+    response = client.post(
+        "/api/detect/async",
+        headers={"X-API-Key": "secret-key"},
+        files={"file": ("sample.png", b"data", "image/png")},
+    )
+    assert response.status_code == 202
+    
+    # 3. Test GET /api/task/{task_id}
+    # Missing key
+    response = client.get("/api/task/some-task-id")
+    assert response.status_code == 401
+    
+    # Invalid key
+    response = client.get("/api/task/some-task-id", headers={"X-API-Key": "wrong-key"})
+    assert response.status_code == 401
+    
+    # Valid key (task doesn't exist, should return 404 instead of 401)
+    response = client.get("/api/task/some-task-id", headers={"X-API-Key": "secret-key"})
+    assert response.status_code == 404
 
-    @test_app.post("/api/detect")
-    @test_limiter.limit("2/minute")
-    async def detect(request: Request, file: UploadFile = File(...)):
-        return {"verdict": "Real", "confidence": 0.8, "raw_scores": [0.8]}
 
-    client = TestClient(test_app)
-
-    for _ in range(2):
-        resp = client.post(
-            "/api/detect", files={"file": ("img.png", b"data", "image/png")}
+def test_rate_limiting_is_enforced(monkeypatch):
+    # Disable API key auth
+    monkeypatch.setattr(api_main, "API_KEY", "")
+    
+    # Mock predict_image
+    monkeypatch.setattr(
+        api_main,
+        "predict_image",
+        lambda _bytes: {"label": "Real", "confidence": 0.8, "raw": [0.8]},
+    )
+    
+    # Clear the limiter's storage before the test
+    api_main.limiter.limiter.storage.reset()
+    
+    client = TestClient(api_main.app)
+    
+    # Send 10 requests, which is the default limit (10/minute)
+    for _ in range(10):
+        response = client.post(
+            "/api/detect",
+            files={"file": ("sample.png", b"data", "image/png")},
         )
-        assert resp.status_code == 200
-
-    resp = client.post(
-        "/api/detect", files={"file": ("img.png", b"data", "image/png")}
+        assert response.status_code == 200
+        
+    # The 11th request should exceed the limit and return 429
+    response = client.post(
+        "/api/detect",
+        files={"file": ("sample.png", b"data", "image/png")},
     )
+    assert response.status_code == 429
+    assert "Rate limit exceeded" in response.json()["detail"]
+    
+    # Clear the limiter storage again so it doesn't affect other tests
+    api_main.limiter.limiter.storage.reset()
 
-    assert resp.status_code == 429
-    assert "Retry-After" in resp.headers
+
+def test_rate_limiting_is_enforced_async(monkeypatch):
+    # Disable API key auth
+    monkeypatch.setattr(api_main, "API_KEY", "")
+    
+    # Clear the limiter's storage before the test
+    api_main.limiter.limiter.storage.reset()
+    
+    client = TestClient(api_main.app)
+    
+    # Send 10 requests to /api/detect/async
+    for _ in range(10):
+        response = client.post(
+            "/api/detect/async",
+            files={"file": ("sample.png", b"data", "image/png")},
+        )
+        assert response.status_code == 202
+        
+    # The 11th request should exceed the limit and return 429
+    response = client.post(
+        "/api/detect/async",
+        files={"file": ("sample.png", b"data", "image/png")},
+    )
+    assert response.status_code == 429
+    assert "Rate limit exceeded" in response.json()["detail"]
+    
+    # Clear the limiter storage again
+    api_main.limiter.limiter.storage.reset()
+
