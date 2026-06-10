@@ -272,3 +272,79 @@ def test_overlay_heatmap_does_not_invert_channels():
     
     assert r_val > 100, f"Expected high red channel value, got {r_val}"
     assert b_val < 50, f"Expected low blue channel value, got {b_val}"
+
+
+def test_make_gradcam_heatmap_nested_sequential_backbone():
+    """Integration: nested Sequential backbone triggers the tape.watch()
+    fix — grads must be non-None and heatmap must have valid shape/values."""
+    backbone = tf.keras.Sequential(
+        [
+            tf.keras.layers.Input(shape=(32, 32, 3)),
+            tf.keras.layers.Conv2D(8, 3, padding="same", activation="relu", name="seq_conv"),
+        ],
+        name="seq_backbone",
+    )
+    model = tf.keras.Sequential(
+        [
+            backbone,
+            tf.keras.layers.GlobalAveragePooling2D(),
+            tf.keras.layers.Dense(2, activation="softmax"),
+        ]
+    )
+
+    img = np.random.rand(1, 32, 32, 3).astype(np.float32)
+    conv_layer = model.get_layer("seq_backbone").get_layer("seq_conv")
+    heatmap = make_gradcam_heatmap(img, model, conv_layer)
+
+    assert heatmap is not None, "Heatmap must not be None"
+    assert heatmap.ndim == 2, f"Expected 2-D heatmap, got shape {heatmap.shape}"
+    assert np.all(np.isfinite(heatmap)), "Heatmap contains non-finite values"
+    assert np.min(heatmap) >= 0.0
+    assert np.max(heatmap) <= 1.0
+
+
+def test_make_gradcam_heatmap_nested_functional_backbone():
+    """Integration: nested Functional backbone — tape.watch() fix ensures
+    gradients flow through the intermediate EagerTensor conv_outputs."""
+    inp = tf.keras.Input(shape=(32, 32, 3))
+    x = tf.keras.layers.Conv2D(8, 3, padding="same", activation="relu", name="func_bb_conv")(inp)
+    backbone = tf.keras.Model(inp, x, name="func_backbone")
+
+    model = tf.keras.Sequential(
+        [
+            backbone,
+            tf.keras.layers.GlobalAveragePooling2D(),
+            tf.keras.layers.Dense(3, activation="softmax"),
+        ]
+    )
+
+    img = np.random.rand(1, 32, 32, 3).astype(np.float32)
+    conv_layer = backbone.get_layer("func_bb_conv")
+    heatmap = make_gradcam_heatmap(img, model, conv_layer)
+
+    assert heatmap is not None
+    assert heatmap.ndim == 2
+    assert np.all(np.isfinite(heatmap))
+    assert np.min(heatmap) >= 0.0
+    assert np.max(heatmap) <= 1.0
+
+
+def test_make_gradcam_heatmap_grads_none_raises_valueerror():
+    """Unit: if conv_outputs is somehow not watched, tape.gradient returns
+    None and make_gradcam_heatmap must raise ValueError rather than crash
+    with AttributeError on tf.reduce_mean(None, ...)."""
+    import unittest.mock as mock
+
+    inputs = tf.keras.Input(shape=(32, 32, 3))
+    x = tf.keras.layers.Conv2D(4, 3, padding="same", activation="relu", name="mock_conv")(inputs)
+    x = tf.keras.layers.GlobalAveragePooling2D()(x)
+    outputs = tf.keras.layers.Dense(2, activation="softmax")(x)
+    model = tf.keras.Model(inputs=inputs, outputs=outputs)
+
+    img = np.zeros((1, 32, 32, 3), dtype=np.float32)
+    conv_layer = model.get_layer("mock_conv")
+
+    # Simulate the broken pre-fix state: tape.gradient returns None
+    with mock.patch("tensorflow.GradientTape.gradient", return_value=None):
+        with pytest.raises(ValueError, match="tape.gradient\\(\\) returned None"):
+            make_gradcam_heatmap(img, model, conv_layer)
