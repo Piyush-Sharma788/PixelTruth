@@ -2,17 +2,23 @@ import cv2
 import numpy as np
 import tensorflow as tf
 try:
-    from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
-except (ImportError, ModuleNotFoundError):
-    from keras.applications.mobilenet_v2 import preprocess_input
-try:
-    from tensorflow.keras.layers import Rescaling
-except (ImportError, ModuleNotFoundError):
-    from keras.layers import Rescaling
-try:
-    from tensorflow.keras.models import Sequential
-except (ImportError, ModuleNotFoundError):
-    from keras import Sequential
+    import keras
+    preprocess_input = keras.applications.mobilenet_v2.preprocess_input
+    Rescaling = keras.layers.Rescaling
+    Sequential = keras.Sequential
+except (ImportError, AttributeError):
+    try:
+        from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
+    except (ImportError, ModuleNotFoundError):
+        pass
+    try:
+        from tensorflow.keras.layers import Rescaling
+    except (ImportError, ModuleNotFoundError):
+        pass
+    try:
+        from tensorflow.keras.models import Sequential
+    except (ImportError, ModuleNotFoundError):
+        pass
 from preprocessing import preprocess_image_array
 
 
