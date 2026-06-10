@@ -1,8 +1,14 @@
 import cv2
 import numpy as np
 import tensorflow as tf
-from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
-from tensorflow.keras.layers import Rescaling
+try:
+    from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
+except (ImportError, ModuleNotFoundError):
+    from keras.applications.mobilenet_v2 import preprocess_input
+try:
+    from tensorflow.keras.layers import Rescaling
+except (ImportError, ModuleNotFoundError):
+    from keras.layers import Rescaling
 from preprocessing import preprocess_image_array
 
 
