@@ -39,6 +39,12 @@ def preprocess_image(image_input: str | Path | bytes | np.ndarray) -> np.ndarray
     else:
         raise TypeError("image_input must be a file path, raw bytes, or numpy array.")
 
+    # Apply face detection and crop for all input types (numpy path was missing this)
+    try:
+        bgr_image, _ = detect_and_crop_face(bgr_image)
+    except Exception:
+        pass  # fall back to full image if face detection fails or no face found
+
     try:
         face_image, _ = detect_and_crop_face(bgr_image)
         return preprocess_image_array(face_image)

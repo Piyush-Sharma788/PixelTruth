@@ -193,7 +193,10 @@ except Exception:
 
 _ = preprocess_image
 
-# Initialise prediction history containers in session state
+# Initialise prediction history
+if "current_predictions" not in st.session_state:
+    st.session_state.current_predictions = {}
+ containers in session state
 if "prediction_history" not in st.session_state:
     st.session_state.prediction_history = []
 

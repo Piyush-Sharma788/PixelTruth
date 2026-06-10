@@ -156,6 +156,13 @@ $env:PIXELTRUTH_MODEL_PATH="C:\full\path\to\deepfake_detection_model.h5"
 streamlit run app.py
 ```
 
+> **Windows users:** Use `set` instead of `export`:
+> ```cmd
+> set PIXELTRUTH_MODEL_PATH=C:\path\to\model.h5
+> set PIXELTRUTH_MODEL_URL=https://your-url/model.h5
+> ```
+> PowerShell: `$env:PIXELTRUTH_MODEL_PATH = "C:\path\to\model.h5"`
+
 If you receive the model from a release asset or shared download link, copy it into the project root first:
 
 ```bash
