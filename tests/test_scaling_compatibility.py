@@ -9,6 +9,10 @@ try:
     from tensorflow.keras.layers import Rescaling
 except (ImportError, ModuleNotFoundError):
     from keras.layers import Rescaling
+try:
+    from tensorflow.keras.models import Sequential
+except (ImportError, ModuleNotFoundError):
+    from keras import Sequential
 from preprocessing import preprocess_image_array
 
 
@@ -64,7 +68,7 @@ def test_training_vs_inference_preprocessing_pipeline():
     # Model embeds a Rescaling(scale=1./127.5, offset=-1.) layer as its first stage.
     # Verify that feeding both paths' outputs to the model's preprocessing layer(s)
     # produces identical values entering the MobileNetV2 backbone.
-    model = tf.keras.models.Sequential([
+    model = Sequential([
         Rescaling(scale=1./127.5, offset=-1., input_shape=(96, 96, 3))
     ])
 

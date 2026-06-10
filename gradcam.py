@@ -34,8 +34,13 @@ def get_backbone_submodel(model):
 
     # --- Pass 1: nested sub-model with convolutional layers (best match) ---
     first_submodel = None
+    try:
+        from tensorflow.keras import Model as _Model
+    except (ImportError, ModuleNotFoundError):
+        from keras import Model as _Model
+
     for layer in model.layers:
-        if isinstance(layer, tf.keras.Model):
+        if isinstance(layer, _Model):
             if first_submodel is None:
                 first_submodel = layer
             if _has_conv(layer):
@@ -102,7 +107,11 @@ def make_gradcam_heatmap(img_array, model, last_conv_layer, pred_index=None):
 
     # 2. Reconstruct functional/sequential outputs accordingly
     if sub_model is not None:
-        if not isinstance(sub_model, tf.keras.Sequential):
+        try:
+            from tensorflow.keras import Sequential as _Sequential
+        except (ImportError, ModuleNotFoundError):
+            from keras import Sequential as _Sequential
+        if not isinstance(sub_model, _Sequential):
             try:
                 sub_conv_output = last_conv_layer.output
             except Exception:

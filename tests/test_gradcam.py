@@ -26,7 +26,11 @@ def test_find_last_conv_layer_nested_backbone():
 
     # 3. Verify it recursively finds the convolutional layer
     conv_layer = find_last_conv_layer(model)
-    assert isinstance(conv_layer, tf.keras.layers.Layer)
+    try:
+        from tensorflow.keras.layers import Layer as _Layer
+    except (ImportError, ModuleNotFoundError):
+        from keras.layers import Layer as _Layer
+    assert isinstance(conv_layer, _Layer)
     assert conv_layer.name == "nested_conv"
 
     # 4. Verify Grad-CAM can be generated from the full model
