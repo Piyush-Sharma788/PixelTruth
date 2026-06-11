@@ -17,7 +17,7 @@ def test_api_rejects_non_image_upload():
 def test_api_returns_prediction(monkeypatch):
     provided_inputs = []
 
-    def fake_predict(image_bytes):
+    def fake_predict(image_bytes, temperature=1.0):
         provided_inputs.append(image_bytes)
         return {
             "label": "Real",
@@ -55,7 +55,7 @@ def test_api_returns_prediction_without_face_metadata(monkeypatch):
     monkeypatch.setattr(
         api_main,
         "predict_image",
-        lambda _bytes: {"label": "Fake", "confidence": 0.2, "raw": [0.2]},
+        lambda _bytes, **kwargs: {"label": "Fake", "confidence": 0.2, "raw": [0.2]},
     )
     client = TestClient(api_main.app)
 
@@ -80,7 +80,7 @@ def test_api_rejects_oversized_upload_before_prediction(monkeypatch):
     monkeypatch.setattr(
         api_main,
         "predict_image",
-        lambda _bytes: pytest.fail("prediction should not run for oversized input"),
+        lambda _bytes, **kwargs: pytest.fail("prediction should not run for oversized input"),
     )
     client = TestClient(api_main.app)
 
@@ -95,7 +95,7 @@ def test_async_detect_returns_task_id(monkeypatch):
     monkeypatch.setattr(
         api_main,
         "predict_image",
-        lambda _bytes: {
+        lambda _bytes, **kwargs: {
             "label": "Real",
             "confidence": 0.95,
             "raw": [0.95],
@@ -118,7 +118,7 @@ def test_task_status_returns_completed(monkeypatch):
     monkeypatch.setattr(
         api_main,
         "predict_image",
-        lambda _bytes: {
+        lambda _bytes, **kwargs: {
             "label": "Fake",
             "confidence": 0.15,
             "raw": [0.15],
@@ -155,7 +155,7 @@ def test_async_detect_rejects_non_image(monkeypatch):
     monkeypatch.setattr(
         api_main,
         "predict_image",
-        lambda _bytes: pytest.fail("prediction should not run for invalid async uploads"),
+        lambda _bytes, **kwargs: pytest.fail("prediction should not run for invalid async uploads"),
     )
     client = TestClient(api_main.app)
 
@@ -229,7 +229,7 @@ def test_api_key_verification_enforced(monkeypatch):
     monkeypatch.setattr(
         api_main,
         "predict_image",
-        lambda _bytes: {"label": "Real", "confidence": 0.8, "raw": [0.8]},
+        lambda _bytes, **kwargs: {"label": "Real", "confidence": 0.8, "raw": [0.8]},
     )
     
     client = TestClient(api_main.app)
@@ -298,7 +298,7 @@ def test_rate_limiting_is_enforced(monkeypatch):
     monkeypatch.setattr(
         api_main,
         "predict_image",
-        lambda _bytes: {"label": "Real", "confidence": 0.8, "raw": [0.8]},
+        lambda _bytes, **kwargs: {"label": "Real", "confidence": 0.8, "raw": [0.8]},
     )
     
     # Clear the limiter's storage before the test

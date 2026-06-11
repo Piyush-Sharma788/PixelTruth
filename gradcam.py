@@ -150,6 +150,33 @@ def make_gradcam_heatmap(img_array, model, last_conv_layer, pred_index=None):
             if pred_index is None:
                 pred_index = tf.argmax(predictions[0])
             class_channel = predictions[:, pred_index]
+    else:
+        try:
+            conv_output = last_conv_layer.output
+        except Exception:
+            try:
+                conv_output = last_conv_layer.outputs[0]
+            except Exception:
+                conv_output = last_conv_layer.get_output_at(0)
+
+        try:
+            model_output = model.output
+        except Exception:
+            try:
+                model_output = model.outputs[0]
+            except Exception:
+                model_output = model.get_output_at(0)
+
+        grad_model = tf.keras.models.Model(
+            model.inputs, [conv_output, model_output]
+        )
+
+        with tf.GradientTape() as tape:
+            conv_outputs, predictions = grad_model(img_array)
+            tape.watch(conv_outputs)
+            if pred_index is None:
+                pred_index = tf.argmax(predictions[0])
+            class_channel = predictions[:, pred_index]
 
     grads = tape.gradient(class_channel, conv_outputs)
     if grads is None:
