@@ -1,13 +1,11 @@
 import functools
-import numpy as np
-import os
+import logging
 
-from model_utils import (
-    ensure_model_file,
-    get_model_path,
-    get_model_url,
-    get_model_sha256,
-)
+import numpy as np
+
+from config import HF_MODEL_NAME
+
+logger = logging.getLogger(__name__)
 
 
 def _memoize_cache_resource(func):
@@ -23,38 +21,32 @@ try:
 except (ImportError, AttributeError):
     cache_resource = _memoize_cache_resource
 
-MODEL_PATH = get_model_path()
-MODEL_URL = get_model_url()
-MODEL_SHA256 = get_model_sha256()
+
+_HF_PROCESSOR = None
+_HF_MODEL = None
 
 
-def get_model_mtime(model_path: str | None = None):
-    try:
-        return os.path.getmtime(model_path or MODEL_PATH)
-    except OSError:
-        return 0.0
+def get_hf_model():
+    global _HF_PROCESSOR, _HF_MODEL
+    if _HF_MODEL is not None:
+        return _HF_PROCESSOR, _HF_MODEL
+
+    from transformers import AutoImageProcessor, SiglipForImageClassification
+
+    logger.info("Loading Hugging Face model: %s", HF_MODEL_NAME)
+    _HF_PROCESSOR = AutoImageProcessor.from_pretrained(HF_MODEL_NAME)
+    _HF_MODEL = SiglipForImageClassification.from_pretrained(HF_MODEL_NAME)
+    _HF_MODEL.eval()
+    logger.info("Hugging Face model loaded successfully")
+    return _HF_PROCESSOR, _HF_MODEL
+
 
 @cache_resource
-def load_cached_model(model_mtime=None, model_path: str | None = None):
-    """
-    Loads TensorFlow model only once.
-    Performs warm-up inference to reduce first prediction latency.
-    """
-
-    model_file_path = ensure_model_file(
-        model_path=model_path or MODEL_PATH,
-        model_url=get_model_url(),
-        model_sha256=get_model_sha256(),
-        download_if_missing=True,
+def load_cached_model():
+    processor, model = get_hf_model()
+    dummy_input = processor(
+        images=np.zeros((224, 224, 3), dtype=np.uint8),
+        return_tensors="pt",
     )
-
-    from tensorflow.keras.models import load_model
-
-    model = load_model(model_file_path)
-
-    # Warm-up inference
-    dummy_input = np.zeros((1, 96, 96, 3), dtype=np.float32)
-
-    model.predict(dummy_input, verbose=0)
-
-    return model
+    model(**dummy_input)
+    return processor, model

@@ -6,12 +6,24 @@ here so that every module can import them from a single source of truth.
 """
 
 # ---------------------------------------------------------------------------
+# Hugging Face model (replaces legacy TensorFlow .h5)
+# ---------------------------------------------------------------------------
+
+HF_MODEL_NAME: str = "prithivMLmods/deepfake-detector-model-v1"
+"""Hugging Face model identifier for deepfake image classification.
+Uses SiglipForImageClassification (ViT-based) with input size 224x224."""
+
+HF_INPUT_SIZE: tuple[int, int] = (224, 224)
+"""Input image dimensions expected by the Hugging Face processor."""
+
+# ---------------------------------------------------------------------------
 # Image preprocessing
 # ---------------------------------------------------------------------------
 
 IMAGE_SIZE: tuple[int, int] = (96, 96)
-"""Target (width, height) to which every input image is resized before
-being fed to the model."""
+"""Target (width, height) to which every face-cropped image is resized
+during legacy face-detection preview.  The HF model uses its own
+processor-based resize (see HF_INPUT_SIZE)."""
 
 # ---------------------------------------------------------------------------
 # Prediction confidence
