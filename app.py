@@ -369,6 +369,7 @@ with col_right:
             if file_bytes_map[name][1] not in st.session_state.current_predictions
         ]
 
+        progress_bar.empty()
         progress_bar = None
         if files_to_process:
             progress_bar = st.progress(0, text="Analysing images…")
@@ -536,7 +537,8 @@ with col_right:
 
             st.session_state.prediction_csv = None
 
-        progress_bar.empty()
+        if progress_bar is not None:
+            progress_bar.empty()
 
         if batch_results:
             total = len(batch_results)
