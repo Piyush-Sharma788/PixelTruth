@@ -20,13 +20,9 @@ from exceptions import (
     ModelExecutionError,
 )
 
-from inference import (
-    preprocess_image,
-    preprocess_uploaded_image as _preprocess_uploaded_image,
-    find_last_conv_layer,
-)
+from inference import find_last_conv_layer
 
-from predict import predict_image as _shared_predict_image
+from predict import preprocess_image, predict_image as _shared_predict_image
 
 from metrics import (
     load_cached_metrics,
@@ -43,10 +39,11 @@ from metrics import (
 )
 
 from utils.model_loader import load_cached_model, get_model_mtime
+from config import LOW_CONFIDENCE_THRESHOLD as DEFAULT_LOW_CONFIDENCE_THRESHOLD, LOG_FORMAT
 
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s'
+    format=LOG_FORMAT,
 )
 
 logger = logging.getLogger(__name__)
@@ -145,7 +142,7 @@ LOW_CONFIDENCE_THRESHOLD = st.sidebar.slider(
     "Confidence Threshold",
     min_value=0.50,
     max_value=1.00,
-    value=0.70,
+    value=DEFAULT_LOW_CONFIDENCE_THRESHOLD,
     step=0.05,
     help="Predictions with confidence below this threshold will be flagged as uncertain."
 )
@@ -179,19 +176,6 @@ except Exception as e:
 
     model = None
 
-
-# ----------------------- IMAGE PIPELINE --------------------
-
-preprocess_uploaded_image = _preprocess_uploaded_image
-
-try:
-    preprocess_uploaded_image.cache_clear = preprocess_image_bytes.cache_clear
-    preprocess_uploaded_image.cache_info = preprocess_image_bytes.cache_info
-
-except Exception:
-    pass
-
-_ = preprocess_image
 
 # Initialise prediction history containers in session state
 if "prediction_history" not in st.session_state:

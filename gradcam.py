@@ -1,6 +1,8 @@
 import numpy as np
 import cv2
 
+from config import IMAGE_SIZE
+
 
 def get_backbone_submodel(model):
     """Return the backbone sub-model used for Grad-CAM gradient computation.
