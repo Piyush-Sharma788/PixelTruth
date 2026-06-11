@@ -133,14 +133,13 @@ def make_gradcam_heatmap(img_array, model, last_conv_layer, pred_index=None):
                 if layer == sub_model:
                     if grad_sub_model is not None:
                         conv_outputs, current = grad_sub_model(current)
-                        tape.watch(conv_outputs)  # Bug #1 fix: EagerTensors not auto-watched
+                        tape.watch(conv_outputs)
                     else:
-                        # Sequential sub-model execution
                         for sub_layer in sub_model.layers:
                             current = sub_layer(current)
                             if sub_layer == last_conv_layer:
                                 conv_outputs = current
-                                tape.watch(conv_outputs)  # Bug #1 fix: watch intermediate tensor
+                                tape.watch(conv_outputs)
                 elif layer == last_conv_layer:
                     current = layer(current)
                     conv_outputs = current
@@ -152,46 +151,14 @@ def make_gradcam_heatmap(img_array, model, last_conv_layer, pred_index=None):
                 pred_index = tf.argmax(predictions[0])
             class_channel = predictions[:, pred_index]
 
-    else:
-        # Fallback to standard flat model construction
-        try:
-            conv_output = last_conv_layer.output
-        except Exception:
-            try:
-                conv_output = last_conv_layer.outputs[0]
-            except Exception:
-                conv_output = last_conv_layer.get_output_at(0)
-
-        try:
-            model_output = model.output
-        except Exception:
-            try:
-                model_output = model.outputs[0]
-            except Exception:
-                model_output = model.get_output_at(0)
-
-        grad_model = tf.keras.models.Model(
-            model.inputs,
-            [
-                conv_output,
-                model_output,
-            ],
-        )
-
-        with tf.GradientTape() as tape:
-            conv_outputs, predictions = grad_model(img_array)
-            if pred_index is None:
-                pred_index = tf.argmax(predictions[0])
-            class_channel = predictions[:, pred_index]
-
     grads = tape.gradient(class_channel, conv_outputs)
-    # Bug #2 fix: guard against disconnected computation graph
     if grads is None:
         raise ValueError(
             "tape.gradient() returned None for conv_outputs. "
-            "Ensure tape.watch(conv_outputs) is called inside the GradientTape context "
-            "before conv_outputs is assigned. This happens when conv_outputs is an "
-            "EagerTensor (not a tf.Variable) produced inside the tape context."
+            "The tensor was not watched or the computation graph is "
+            "disconnected. Ensure tape.watch(conv_outputs) is called "
+            "inside the GradientTape context immediately after "
+            "conv_outputs is assigned."
         )
     pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
     conv_outputs = conv_outputs[0]
