@@ -8,7 +8,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageOps
 
-from config import IMAGE_SIZE
+from config import IMAGE_SIZE, HF_INPUT_SIZE
 
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tiff"}
 
