@@ -39,7 +39,7 @@ def extract_exif(image_bytes: bytes) -> dict:
     
     try:
         img = Image.open(BytesIO(image_bytes))
-        exif = img._getexif()
+        exif = img.getexif()
     except Exception:
         exif = None
         
