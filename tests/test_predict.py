@@ -55,6 +55,51 @@ def test_predict_image_passes_model_override_and_supports_softmax(monkeypatch):
     assert result["confidence"] == pytest.approx(0.9)
 
 
+def test_predict_image_calls_face_detection_for_ndarray_input(monkeypatch):
+    import numpy as np
+    from preprocessing import preprocess_image_array
+
+    detected_faces = []
+
+    def fake_detect_and_crop_face(image):
+        detected_faces.append(True)
+        return image, (10, 10, 50, 50)
+
+    monkeypatch.setattr(
+        "predict.detect_and_crop_face", fake_detect_and_crop_face
+    )
+    monkeypatch.setattr(
+        predict, "load_cached_model", lambda *args, **kwargs: FakeModel([[0.8]])
+    )
+
+    bgr_image = np.zeros((100, 100, 3), dtype=np.uint8)
+    predict.predict_image(bgr_image)
+
+    assert len(detected_faces) == 1, (
+        "predict_image() must call detect_and_crop_face for numpy array input"
+    )
+
+
+def test_predict_image_falls_back_to_full_image_when_face_detection_fails(monkeypatch):
+    import numpy as np
+
+    def failing_detect(image):
+        raise RuntimeError("Face detection crashed")
+
+    monkeypatch.setattr(
+        "predict.detect_and_crop_face", failing_detect
+    )
+    monkeypatch.setattr(
+        predict, "load_cached_model", lambda *args, **kwargs: FakeModel([[0.8]])
+    )
+
+    bgr_image = np.zeros((100, 100, 3), dtype=np.uint8)
+    result = predict.predict_image(bgr_image)
+
+    assert result["label"] in ("Real", "Fake")
+    assert result["face_detected"] is False or result["face_detected"] is None
+
+
 def test_decode_prediction_rejects_unknown_output_shape():
     with pytest.raises(ModelExecutionError, match="Unsupported model output shape"):
         predict.decode_prediction(np.array([[0.1, 0.2, 0.7]]))
