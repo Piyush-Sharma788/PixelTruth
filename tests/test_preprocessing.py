@@ -41,3 +41,36 @@ def test_uploaded_bytes_are_not_retained_in_cache():
     preprocess_image_bytes(encoded.tobytes())
 
     assert preprocess_image_bytes.cache_info().currsize == 1
+
+
+def test_lru_cache_returns_hits_on_repeated_calls():
+    import cv2
+
+    ok, encoded = cv2.imencode(".png", np.zeros((20, 20, 3), dtype=np.uint8))
+    assert ok
+    data = encoded.tobytes()
+
+    preprocess_image_bytes.cache_clear()
+    preprocess_image_bytes(data)
+    preprocess_image_bytes(data)
+
+    info = preprocess_image_bytes.cache_info()
+    assert info.hits > 0, f"Expected cache hits > 0, got {info}"
+    assert info.currsize > 0, f"Expected cache currsize > 0, got {info}"
+
+
+def test_decode_image_bytes_cache_returns_hits_on_repeated_calls():
+    import cv2
+
+    ok, encoded = cv2.imencode(".png", np.zeros((20, 20, 3), dtype=np.uint8))
+    assert ok
+    data = encoded.tobytes()
+
+    from preprocessing import decode_image_bytes
+    decode_image_bytes.cache_clear()
+    decode_image_bytes(data)
+    decode_image_bytes(data)
+
+    info = decode_image_bytes.cache_info()
+    assert info.hits > 0, f"Expected cache hits > 0, got {info}"
+    assert info.currsize > 0, f"Expected cache currsize > 0, got {info}"
