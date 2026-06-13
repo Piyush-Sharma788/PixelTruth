@@ -1,6 +1,7 @@
 streamlit==1.35.0
-tensorflow==2.16.1
-# keras removed to avoid conflict with tensorflow's built-in keras
+torch>=2.0.0
+torchvision>=0.15.0
+transformers>=4.36.0
 numpy==1.26.4
 pandas==2.2.2
 pillow==10.3.0
@@ -15,4 +16,3 @@ python-multipart>=0.0.6
 slowapi>=0.1.9
 pydantic==2.12.3
 pydantic-core==2.41.4
-httpx>=0.24.0

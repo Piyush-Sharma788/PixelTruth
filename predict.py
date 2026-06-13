@@ -1,4 +1,4 @@
-"""Unified inference pipeline used by the CLI and FastAPI application."""
+"""Unified inference pipeline using Hugging Face Transformers (SigLIP)."""
 
 from __future__ import annotations
 
@@ -8,18 +8,20 @@ import logging
 import sys
 from pathlib import Path
 
+import cv2
 import numpy as np
+from PIL import Image
 
-from config import SUPPORTED_EXTENSIONS
+from config import SUPPORTED_EXTENSIONS, HF_MODEL_NAME
 from exceptions import ModelExecutionError, PreprocessingError
-from preprocessing import preprocess_image_array, preprocess_image_bytes, decode_image_bytes, detect_and_crop_face
-from utils.model_loader import load_cached_model, get_model_mtime
+from preprocessing import decode_image_bytes, detect_and_crop_face
+from utils.model_loader import load_cached_model
 
 logger = logging.getLogger(__name__)
 
 
-def preprocess_image(image_input: str | Path | bytes | np.ndarray) -> np.ndarray:
-    """Return an RGB normalized batch for a path, raw bytes, or BGR array after face detection."""
+def preprocess_image(image_input: str | Path | bytes | np.ndarray) -> Image.Image:
+    """Return a PIL RGB image (face-cropped if detected) for the HF processor."""
     if isinstance(image_input, (str, Path)):
         image_path = Path(image_input)
         if not image_path.exists():
@@ -35,86 +37,66 @@ def preprocess_image(image_input: str | Path | bytes | np.ndarray) -> np.ndarray
     elif isinstance(image_input, bytes):
         bgr_image = decode_image_bytes(image_input)
     elif isinstance(image_input, np.ndarray):
-        bgr_image = image_input
+        if image_input.ndim == 2:
+            bgr_image = cv2.cvtColor(image_input, cv2.COLOR_GRAY2BGR)
+        elif image_input.shape[2] == 4:
+            bgr_image = cv2.cvtColor(image_input, cv2.COLOR_RGBA2BGR)
+        elif image_input.shape[2] == 1:
+            bgr_image = cv2.cvtColor(image_input, cv2.COLOR_GRAY2BGR)
+        else:
+            bgr_image = image_input
     else:
         raise TypeError("image_input must be a file path, raw bytes, or numpy array.")
 
     try:
         face_image, _ = detect_and_crop_face(bgr_image)
-        return preprocess_image_array(face_image)
+        rgb_image = cv2.cvtColor(face_image, cv2.COLOR_BGR2RGB)
+        return Image.fromarray(rgb_image)
     except Exception as exc:
         logger.error("Image preprocessing failed: %s", exc, exc_info=True)
         raise PreprocessingError(f"Failed to preprocess image: {exc}") from exc
 
 
-def decode_prediction(prediction: np.ndarray) -> tuple[str, float, list[float]]:
-    """Convert sigmoid or two-class softmax output to a label and confidence."""
-    scores = np.asarray(prediction, dtype=float).reshape(-1)
-    if scores.size == 1:
-        real_probability = float(scores[0])
-        if not 0.0 <= real_probability <= 1.0:
-            raise ModelExecutionError("Model returned a probability outside [0, 1].")
-        # Training directories are alphabetic: class 0 = fake, class 1 = real.
-        if real_probability >= 0.5:
-            return "Real", real_probability, scores.tolist()
-        return "Fake", 1.0 - real_probability, scores.tolist()
+def decode_prediction(logits: np.ndarray) -> tuple[str, float, list[float]]:
+    """Convert HF model logits to label, confidence, and raw scores."""
+    import torch
 
-    if scores.size == 2:
-        class_index = int(np.argmax(scores))
-        label = "Real" if class_index == 1 else "Fake"
-        return label, float(scores[class_index]), scores.tolist()
+    scores = np.asarray(logits, dtype=float).reshape(-1)
+    probs = torch.softmax(torch.from_numpy(scores), dim=0).numpy()
 
-    raise ModelExecutionError(
-        f"Unsupported model output shape: {np.asarray(prediction).shape}."
-    )
+    if probs.size != 2:
+        raise ModelExecutionError(
+            f"Unsupported model output shape: {np.asarray(logits).shape}. "
+            f"Expected 2 classes (fake, real)."
+        )
+
+    class_index = int(np.argmax(probs))
+    label = "Real" if class_index == 1 else "Fake"
+    return label, float(probs[class_index]), probs.tolist()
 
 
 def predict_image(
     image_input: str | Path | bytes | np.ndarray,
-    model_path: str | None = None,
     temperature: float = 1.0,
 ) -> dict:
-    """Run deepfake detection and return a normalized result dictionary."""
+    """Run deepfake detection via Hugging Face model and return a normalized result dictionary."""
     source_path = str(image_input) if isinstance(image_input, (str, Path)) else None
 
-    # Get BGR image
-    if isinstance(image_input, (str, Path)):
-        image_path = Path(image_input)
-        if not image_path.exists():
-            raise FileNotFoundError(f"Image not found: {image_path}")
-        if image_path.suffix.lower() not in SUPPORTED_EXTENSIONS:
-            supported = ", ".join(sorted(SUPPORTED_EXTENSIONS))
-            raise ValueError(
-                f"Unsupported file extension '{image_path.suffix.lower()}'. "
-                f"Supported: {supported}"
-            )
-        raw_bytes = image_path.read_bytes()
-        bgr_image = decode_image_bytes(raw_bytes)
-    elif isinstance(image_input, bytes):
-        bgr_image = decode_image_bytes(image_input)
-    elif isinstance(image_input, np.ndarray):
-        bgr_image = image_input
-    else:
-        raise TypeError("image_input must be a file path, raw bytes, or numpy array.")
+    pil_image = preprocess_image(image_input)
 
     try:
-        face_image, face_box = detect_and_crop_face(bgr_image)
-        processed = preprocess_image_array(face_image)
-    except Exception as exc:
-        logger.error("Image preprocessing failed: %s", exc, exc_info=True)
-        raise PreprocessingError(f"Failed to preprocess image: {exc}") from exc
+        processor, model = load_cached_model()
 
-    try:
-        model = load_cached_model(get_model_mtime(model_path), model_path=model_path)
-        prediction = model.predict(processed, verbose=0)
-        
-        # Decode raw prediction for raw confidence
-        _, raw_confidence, _ = decode_prediction(prediction)
-        
-        # Apply temperature scaling for calibrated confidence
-        from calibration import temperature_scale
-        calibrated_prediction = temperature_scale(prediction, temperature=temperature)
-        label, confidence, raw_scores = decode_prediction(calibrated_prediction)
+        inputs = processor(images=pil_image, return_tensors="pt")
+        outputs = model(**inputs)
+        logits = outputs.logits.detach().numpy()
+
+        raw_confidence = float(np.max(logits))
+
+        scaled_logits = logits / temperature
+        label, confidence, raw_scores = decode_prediction(scaled_logits)
+
+        face_bgr = np.array(pil_image)[:, :, ::-1]
     except ModelExecutionError:
         raise
     except Exception as exc:
@@ -125,12 +107,12 @@ def predict_image(
         "label": label,
         "confidence": confidence,
         "raw_confidence": raw_confidence,
-        "raw_prediction": prediction,
+        "raw_prediction": logits,
         "raw": raw_scores,
-        "processed_image": processed,
-        "face_detected": face_box is not None,
-        "face_box": face_box,
-        "face_image": face_image,
+        "processed_image": np.array(pil_image),
+        "face_detected": True,
+        "face_box": None,
+        "face_image": face_bgr,
     }
     if source_path is not None:
         result["image"] = source_path
@@ -149,15 +131,9 @@ def predict_image_tuple(image_input):
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="predict.py",
-        description="PixelTruth deepfake image detector.",
+        description="PixelTruth deepfake image detector (Hugging Face).",
     )
     parser.add_argument("images", metavar="IMAGE", nargs="+", help="image path(s)")
-    parser.add_argument(
-        "--model",
-        metavar="PATH",
-        default=None,
-        help="path to the Keras model file",
-    )
     parser.add_argument(
         "--temperature",
         type=float,
@@ -182,20 +158,15 @@ def main(argv: list[str] | None = None) -> int:
 
     for image_path in args.images:
         try:
-            res = predict_image(
-                image_path,
-                model_path=args.model,
-                temperature=args.temperature,
-            )
+            res = predict_image(image_path, temperature=args.temperature)
             results.append(res)
-            
-            # Print low confidence warning if applicable
+
             if not args.quiet and not args.output_json:
                 if res["confidence"] < args.threshold:
                     print(
                         f"[WARNING] Low-confidence prediction for {image_path}: "
                         f"{res['confidence'] * 100:.1f}% (threshold: {args.threshold * 100:.1f}%)",
-                        file=sys.stderr
+                        file=sys.stderr,
                     )
         except (
             FileNotFoundError,
@@ -211,7 +182,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.output_json:
         serializable_results = [
-            {key: value for key, value in result.items() if key not in ("processed_image", "face_image", "raw_prediction")}
+            {key: value for key, value in result.items() if key not in ("processed_image", "face_image")}
             for result in results
         ]
         output = (
