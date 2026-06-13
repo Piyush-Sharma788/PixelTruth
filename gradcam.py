@@ -1,5 +1,31 @@
 import numpy as np
 import cv2
+from config import IMAGE_SIZE
+
+
+def find_last_conv_layer(model):
+    """Recursively search for the last convolutional layer in the model."""
+    layers = getattr(model, "layers", None) or []
+    for layer in reversed(layers):
+        if hasattr(layer, "layers") and getattr(layer, "layers"):
+            try:
+                return find_last_conv_layer(layer)
+            except ValueError:
+                continue
+
+        clsname = layer.__class__.__name__
+        if "Conv" in clsname:
+            return layer
+
+    try:
+        for layer in reversed(list(model._flatten_layers())):
+            clsname = layer.__class__.__name__
+            if "Conv" in clsname:
+                return layer
+    except Exception:
+        pass
+
+    raise ValueError("No convolutional layer found in the provided model")
 
 
 def get_backbone_submodel(model):

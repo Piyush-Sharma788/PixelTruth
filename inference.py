@@ -62,36 +62,6 @@ def load_model_safe(
         raise ModelExecutionError(f"Failed to load model: {exc}") from exc
 
 
-def find_last_conv_layer(model):
-    """Recursively search for the last convolutional layer object in the model."""
-    # We want to traverse layers in reverse order.
-    # If a layer has a 'layers' attribute, it's a nested container (Sequential or Functional Model).
-    # We should search inside it recursively.
-    layers = getattr(model, "layers", None) or []
-    for layer in reversed(layers):
-        if hasattr(layer, "layers") and getattr(layer, "layers"):
-            try:
-                return find_last_conv_layer(layer)
-            except ValueError:
-                # If no conv layer was found in this sub-model, continue searching other layers
-                continue
-
-        clsname = layer.__class__.__name__
-        if "Conv" in clsname:
-            return layer
-
-    # Fallback using _flatten_layers if available
-    try:
-        for layer in reversed(list(model._flatten_layers())):
-            clsname = layer.__class__.__name__
-            if "Conv" in clsname:
-                return layer
-    except Exception:
-        pass
-
-    raise ValueError("No convolutional layer found in the provided model")
-
-
 def predict_image(model, image: np.ndarray) -> Tuple[Optional[str], Optional[float], Optional[np.ndarray]]:
     """Run prediction on a pre- or unprocessed image.
 
