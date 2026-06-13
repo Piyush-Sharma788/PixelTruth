@@ -2,7 +2,7 @@ import pytest
 import numpy as np
 import tensorflow as tf
 
-from inference import find_last_conv_layer
+from gradcam import find_last_conv_layer
 from gradcam import get_backbone_submodel, make_gradcam_heatmap
 
 
