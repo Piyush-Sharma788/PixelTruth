@@ -497,12 +497,11 @@ with col_right:
             gradcam_image = None
 
             try:
-                backbone_model = get_backbone_submodel(model)
-                last_conv_layer = find_last_conv_layer(backbone_model)
+                last_conv_layer = find_last_conv_layer(model)
 
                 heatmap = make_gradcam_heatmap(
                     processed_img,
-                    backbone_model,
+                    model,
                     last_conv_layer
                 )
 
@@ -1499,10 +1498,8 @@ with col_right:
 
             gradcam_image = None
             try:
-                # Dynamic lookup avoids coupling Grad-CAM to layer ordering.
-                backbone_model  = get_backbone_submodel(model)
-                last_conv_layer = find_last_conv_layer(backbone_model)
-                heatmap         = make_gradcam_heatmap(processed_img, backbone_model, last_conv_layer)
+                last_conv_layer = find_last_conv_layer(model)
+                heatmap         = make_gradcam_heatmap(processed_img, model, last_conv_layer)
                 gradcam_image   = overlay_heatmap(bgr_image, heatmap)
             except Exception as e:
                 logger.warning(f"Grad-CAM failed for {uploaded_file.name}: {e}", exc_info=True)

@@ -62,11 +62,29 @@ def get_backbone_submodel(model):
 
 
 
-def make_gradcam_heatmap(img_array, model, last_conv_layer, pred_index=None):
-    # Import TensorFlow lazily to avoid import-time side effects during tests
+def _forward_pass(container, input_tensor, stop_layer):
     import tensorflow as tf
 
-    # If last_conv_layer is passed as a string, retrieve the layer object recursively
+    current = input_tensor
+    conv_output = None
+    for layer in getattr(container, "layers", []):
+        if isinstance(layer, tf.keras.layers.InputLayer):
+            continue
+        sub_layers = getattr(layer, "layers", None)
+        if sub_layers:
+            current, conv_out = _forward_pass(layer, current, stop_layer)
+            if conv_out is not None:
+                conv_output = conv_out
+        else:
+            current = layer(current)
+        if layer == stop_layer:
+            conv_output = current
+    return current, conv_output
+
+
+def make_gradcam_heatmap(img_array, model, last_conv_layer, pred_index=None):
+    import tensorflow as tf
+
     if isinstance(last_conv_layer, str):
         def find_layer_by_name(m, name):
             try:
@@ -85,107 +103,28 @@ def make_gradcam_heatmap(img_array, model, last_conv_layer, pred_index=None):
             raise ValueError(f"No layer named '{last_conv_layer}' found in the model.")
         last_conv_layer = layer_obj
 
-    # Ensure the model has been called/built on the input structure so that input/output nodes are initialized
     try:
         _ = model(img_array)
     except Exception:
         pass
 
-    # 1. Identify if the last_conv_layer is nested inside a sub-model
-    sub_model = None
-    for layer in getattr(model, "layers", []):
-        if layer == last_conv_layer:
-            break
-        elif hasattr(layer, "layers") and any(l == last_conv_layer for l in getattr(layer, "layers", [])):
-            sub_model = layer
-            break
-
-    # 2. Reconstruct functional/sequential outputs accordingly
-    if sub_model is not None:
-        if not isinstance(sub_model, tf.keras.Sequential):
-            try:
-                sub_conv_output = last_conv_layer.output
-            except Exception:
-                try:
-                    sub_conv_output = last_conv_layer.outputs[0]
-                except Exception:
-                    sub_conv_output = last_conv_layer.get_output_at(0)
-
-            try:
-                sub_model_output = sub_model.output
-            except Exception:
-                try:
-                    sub_model_output = sub_model.outputs[0]
-                except Exception:
-                    sub_model_output = sub_model.get_output_at(0)
-
-            grad_sub_model = tf.keras.models.Model(
-                sub_model.inputs,
-                [sub_conv_output, sub_model_output]
+    with tf.GradientTape() as tape:
+        predictions, conv_outputs = _forward_pass(model, img_array, last_conv_layer)
+        if conv_outputs is None:
+            raise ValueError(
+                f"Layer {last_conv_layer.name} was not found during forward pass."
             )
-        else:
-            grad_sub_model = None
-
-        with tf.GradientTape() as tape:
-            current = img_array
-            conv_outputs = None
-            for layer in model.layers:
-                if layer == sub_model:
-                    if grad_sub_model is not None:
-                        conv_outputs, current = grad_sub_model(current)
-                        tape.watch(conv_outputs)
-                    else:
-                        for sub_layer in sub_model.layers:
-                            current = sub_layer(current)
-                            if sub_layer == last_conv_layer:
-                                conv_outputs = current
-                                tape.watch(conv_outputs)
-                elif layer == last_conv_layer:
-                    current = layer(current)
-                    conv_outputs = current
-                else:
-                    current = layer(current)
-            predictions = current
-
-            if pred_index is None:
-                pred_index = tf.argmax(predictions[0])
-            class_channel = predictions[:, pred_index]
-    else:
-        try:
-            conv_output = last_conv_layer.output
-        except Exception:
-            try:
-                conv_output = last_conv_layer.outputs[0]
-            except Exception:
-                conv_output = last_conv_layer.get_output_at(0)
-
-        try:
-            model_output = model.output
-        except Exception:
-            try:
-                model_output = model.outputs[0]
-            except Exception:
-                model_output = model.get_output_at(0)
-
-        grad_model = tf.keras.models.Model(
-            model.inputs, [conv_output, model_output]
-        )
-
-        with tf.GradientTape() as tape:
-            conv_outputs, predictions = grad_model(img_array)
-            tape.watch(conv_outputs)
-            if pred_index is None:
-                pred_index = tf.argmax(predictions[0])
-            class_channel = predictions[:, pred_index]
+        if pred_index is None:
+            pred_index = tf.argmax(predictions[0])
+        class_channel = predictions[:, pred_index]
 
     grads = tape.gradient(class_channel, conv_outputs)
     if grads is None:
         raise ValueError(
             "tape.gradient() returned None for conv_outputs. "
             "The tensor was not watched or the computation graph is "
-            "disconnected. Ensure tape.watch(conv_outputs) is called "
-            "inside the GradientTape context immediately after "
-            "conv_outputs is assigned."
+            "disconnected. Ensure the last_conv_layer is part of the "
+            "model's computation graph."
         )
     pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
     conv_outputs = conv_outputs[0]
