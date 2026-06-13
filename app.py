@@ -306,451 +306,765 @@ st.markdown("</div>", unsafe_allow_html=True)
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-col_left, col_right = st.columns([1.3, 1])
 
-with col_left:
-    st.markdown("<div class='glass-card upload-box'>", unsafe_allow_html=True)
 
-    st.subheader("🖼 Upload Images")
+analysis_mode = st.radio(
+    "🔍 Analysis Mode",
+    ["Batch Analysis", "Forensic Comparison"],
+    horizontal=True,
+)
 
-    uploaded_files = st.file_uploader(
-        "Drop or browse social media images (select one or more)",
-        type=["jpg", "jpeg", "png", "webp"],
-        accept_multiple_files=True,
-        label_visibility="collapsed",
-    )
+st.markdown("<br>", unsafe_allow_html=True)
 
-    if uploaded_files is None:
-        uploaded_files = []
-    else:
-        uploaded_files = [f for f in uploaded_files if f is not None]
+if analysis_mode == "Batch Analysis":
 
-    st.markdown("</div>", unsafe_allow_html=True)
+    col_left, col_right = st.columns([1.3, 1])
 
-with col_right:
-    st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
 
-    st.subheader("📊 Detection Results")
 
-    if not uploaded_files:
-        st.write(
-            "Upload one or more images on the left to run deepfake detection."
+    with col_left:
+        st.markdown("<div class='glass-card upload-box'>", unsafe_allow_html=True)
+
+        st.subheader("🖼 Upload Images")
+
+        uploaded_files = st.file_uploader(
+            "Drop or browse social media images (select one or more)",
+            type=["jpg", "jpeg", "png", "webp"],
+            accept_multiple_files=True,
+            label_visibility="collapsed",
         )
 
-    elif model is None:
-        st.error(
-            "Model could not be loaded. Detection is unavailable."
-        )
+        if uploaded_files is None:
+            uploaded_files = []
+        else:
+            uploaded_files = [f for f in uploaded_files if f is not None]
 
-    else:
-        MAX_FILE_SIZE_MB = 10
-        MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
+        st.markdown("</div>", unsafe_allow_html=True)
 
-        uploaded_hashes = set()
-        file_bytes_map = {}
-        if "current_predictions" not in st.session_state:
-            st.session_state.current_predictions = {}
+    with col_right:
+        st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
 
-        batch_results = []
-        batch_errors = []
+        st.subheader("📊 Detection Results")
 
-        # Guard: initialise accumulators used across both loops below
-        uploaded_hashes: set = set()
-        file_bytes_map: dict = {}
-
-        # Guard: initialise current_predictions if not already in session state
-        if "current_predictions" not in st.session_state:
-            st.session_state.current_predictions = {}
-
-        progress_bar = st.progress(0, text="Analysing images…")
-
-
-        for idx, uploaded_file in enumerate(uploaded_files):
-            progress_bar.progress(
-                (idx + 1) / len(uploaded_files),
-                text=f"Analysing {uploaded_file.name} ({idx + 1}/{len(uploaded_files)})…"
+        if not uploaded_files:
+            st.write(
+                "Upload one or more images on the left to run deepfake detection."
             )
 
-            if uploaded_file.size > MAX_FILE_SIZE_BYTES:
-                batch_errors.append((
-                    uploaded_file.name,
-                    f"File too large ({uploaded_file.size / (1024 * 1024):.1f} MB). "
-                    f"Maximum allowed is {MAX_FILE_SIZE_MB} MB."
-                ))
-                continue
+        elif model is None:
+            st.error(
+                "Model could not be loaded. Detection is unavailable."
+            )
 
-            try:
-                raw_bytes = uploaded_file.read()
-                uploaded_file.seek(0)
-                file_hash = hashlib.sha256(raw_bytes).hexdigest()
-                uploaded_hashes.add(file_hash)
-                file_bytes_map[uploaded_file.name] = (raw_bytes, file_hash)
-            except Exception as e:
-                batch_errors.append((uploaded_file.name, f"Could not read file: {e}"))
-                continue
+        else:
+            MAX_FILE_SIZE_MB = 10
+            MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 
-        # Prune st.session_state.current_predictions to remove files that are no longer uploaded
-        st.session_state.current_predictions = {
-            h: res for h, res in st.session_state.current_predictions.items() if h in uploaded_hashes
-        }
+            uploaded_hashes = set()
+            file_bytes_map = {}
+            if "current_predictions" not in st.session_state:
+                st.session_state.current_predictions = {}
 
-        # Determine which files need processing
-        files_to_process = [
-            name for name in file_bytes_map
-            if file_bytes_map[name][1] not in st.session_state.current_predictions
-        ]
+            batch_results = []
+            batch_errors = []
 
-        progress_bar = None
-        if files_to_process:
+            # Guard: initialise accumulators used across both loops below
+            uploaded_hashes: set = set()
+            file_bytes_map: dict = {}
+
+            # Guard: initialise current_predictions if not already in session state
+            if "current_predictions" not in st.session_state:
+                st.session_state.current_predictions = {}
+
             progress_bar = st.progress(0, text="Analysing images…")
 
-        for idx, uploaded_file in enumerate(uploaded_files):
-            if uploaded_file.name not in file_bytes_map:
-                continue
 
-            raw_bytes, entry_hash = file_bytes_map[uploaded_file.name]
-
-            # Check if already processed
-            if entry_hash in st.session_state.current_predictions:
-                cached_res = st.session_state.current_predictions[entry_hash]
-                
-                # Dynamically apply temperature scaling to raw_prediction
-                from calibration import temperature_scale
-                from predict import decode_prediction
-                
-                calibrated_pred = temperature_scale(cached_res["raw_prediction"], temperature=CALIBRATION_TEMPERATURE)
-                label, confidence, raw_scores = decode_prediction(calibrated_pred)
-                
-                # Update dynamic fields
-                cached_res["label"] = label
-                cached_res["confidence"] = confidence
-                cached_res["raw"] = raw_scores
-                cached_res["is_uncertain"] = confidence < LOW_CONFIDENCE_THRESHOLD
-                
-                batch_results.append(cached_res)
-                continue
-
-            # Update progress bar if processing
-            if progress_bar is not None:
-                process_idx = files_to_process.index(uploaded_file.name)
+            for idx, uploaded_file in enumerate(uploaded_files):
                 progress_bar.progress(
-                    (process_idx + 1) / len(files_to_process),
-                    text=f"Analysing {uploaded_file.name} ({process_idx + 1}/{len(files_to_process)})…"
+                    (idx + 1) / len(uploaded_files),
+                    text=f"Analysing {uploaded_file.name} ({idx + 1}/{len(uploaded_files)})…"
                 )
 
-            try:
-                exif_data = extract_exif(raw_bytes)
-                bgr_image = decode_image_bytes(raw_bytes)
+                if uploaded_file.size > MAX_FILE_SIZE_BYTES:
+                    batch_errors.append((
+                        uploaded_file.name,
+                        f"File too large ({uploaded_file.size / (1024 * 1024):.1f} MB). "
+                        f"Maximum allowed is {MAX_FILE_SIZE_MB} MB."
+                    ))
+                    continue
 
-            except Exception as e:
-                batch_errors.append((uploaded_file.name, f"Could not read file: {e}"))
-                continue
+                try:
+                    raw_bytes = uploaded_file.read()
+                    uploaded_file.seek(0)
+                    file_hash = hashlib.sha256(raw_bytes).hexdigest()
+                    uploaded_hashes.add(file_hash)
+                    file_bytes_map[uploaded_file.name] = (raw_bytes, file_hash)
+                except Exception as e:
+                    batch_errors.append((uploaded_file.name, f"Could not read file: {e}"))
+                    continue
 
-            label = None
-            confidence = None
-            processed_img = None
-            face_image = None
-            face_detected = False
-            face_box = None
-            box_image = bgr_image.copy()
-
-            try:
-                # Run prediction — face detection happens once inside predict_image.
-                # We reuse its face_image / face_box rather than calling
-                # detect_and_crop_face a second time.
-                prediction = predict_image(raw_bytes, temperature=CALIBRATION_TEMPERATURE)
-                label = prediction["label"]
-                confidence = prediction["confidence"]
-                processed_img = prediction["processed_image"]
-                raw_pred_array = prediction["raw_prediction"]
-                face_image = prediction.get("face_image", bgr_image)
-                face_box = prediction.get("face_box")
-
-                if face_box is not None:
-                    face_detected = True
-                    x, y, w, h = face_box
-
-                    import cv2
-                    cv2.rectangle(
-                        box_image,
-                        (x, y),
-                        (x + w, y + h),
-                        (94, 219, 120),
-                        3
-                    )
-
-            except PreprocessingError as e:
-                logger.error(f"PreprocessingError for {uploaded_file.name}: {e}", exc_info=True)
-                batch_errors.append((uploaded_file.name, "Image preprocessing failed."))
-                continue
-
-            except ModelExecutionError as e:
-                logger.error(f"ModelExecutionError for {uploaded_file.name}: {e}", exc_info=True)
-                batch_errors.append((uploaded_file.name, "Model inference failed."))
-                continue
-
-            except Exception as e:
-                logger.error(f"Unexpected error for {uploaded_file.name}: {e}", exc_info=True)
-                batch_errors.append((uploaded_file.name, f"Unexpected error: {e}"))
-                continue
-
-            gradcam_image = None
-
-            try:
-                backbone_model = get_backbone_submodel(model)
-                last_conv_layer = find_last_conv_layer(backbone_model)
-
-                heatmap = make_gradcam_heatmap(
-                    processed_img,
-                    backbone_model,
-                    last_conv_layer
-                )
-
-                gradcam_image = overlay_heatmap(face_image, heatmap)
-
-            except Exception as e:
-                logger.warning(f"Grad-CAM failed for {uploaded_file.name}: {e}", exc_info=True)
-
-            ela_image = None
-            ela_score = None
-
-            try:
-                ela_image = compute_ela(raw_bytes)
-
-                if ela_image is not None:
-                    ela_score = ela_uniformity_score(ela_image)
-
-            except Exception as e:
-                logger.warning(f"ELA failed for {uploaded_file.name}: {e}")
-
-            prediction_result = {
-                "filename": uploaded_file.name,
-                "label": label,
-                "confidence": confidence,
-                "raw_prediction": raw_pred_array,
-                "bgr_image": bgr_image,
-                "box_image": box_image,
-                "face_image": face_image,
-                "face_detected": face_detected,
-                "gradcam": gradcam_image,
-                "is_uncertain": confidence < LOW_CONFIDENCE_THRESHOLD,
-                "exif": exif_data,
-                "ela_image": ela_image,
-                "ela_score": ela_score,
+            # Prune st.session_state.current_predictions to remove files that are no longer uploaded
+            st.session_state.current_predictions = {
+                h: res for h, res in st.session_state.current_predictions.items() if h in uploaded_hashes
             }
 
-            batch_results.append(prediction_result)
-            st.session_state.current_predictions[entry_hash] = prediction_result
+            # Determine which files need processing
+            files_to_process = [
+                name for name in file_bytes_map
+                if file_bytes_map[name][1] not in st.session_state.current_predictions
+            ]
 
-            entry_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            progress_bar = None
+            if files_to_process:
+                progress_bar = st.progress(0, text="Analysing images…")
 
-            if entry_hash not in st.session_state.prediction_history_hashes:
-                history_entry = {
-                    "Filename": sanitize_csv_value(uploaded_file.name),
-                    "Result": sanitize_csv_value(label),
-                    "Confidence (%)": f"{confidence * 100:.1f}",
-                    "Timestamp": entry_timestamp,
-                    "_hash": entry_hash,
+            for idx, uploaded_file in enumerate(uploaded_files):
+                if uploaded_file.name not in file_bytes_map:
+                    continue
+
+                raw_bytes, entry_hash = file_bytes_map[uploaded_file.name]
+
+                # Check if already processed
+                if entry_hash in st.session_state.current_predictions:
+                    cached_res = st.session_state.current_predictions[entry_hash]
+                    
+                    # Dynamically apply temperature scaling to raw_prediction
+                    from calibration import temperature_scale
+                    from predict import decode_prediction
+                    
+                    calibrated_pred = temperature_scale(cached_res["raw_prediction"], temperature=CALIBRATION_TEMPERATURE)
+                    label, confidence, raw_scores = decode_prediction(calibrated_pred)
+                    
+                    # Update dynamic fields
+                    cached_res["label"] = label
+                    cached_res["confidence"] = confidence
+                    cached_res["raw"] = raw_scores
+                    cached_res["is_uncertain"] = confidence < LOW_CONFIDENCE_THRESHOLD
+                    
+                    batch_results.append(cached_res)
+                    continue
+
+                # Update progress bar if processing
+                if progress_bar is not None:
+                    process_idx = files_to_process.index(uploaded_file.name)
+                    progress_bar.progress(
+                        (process_idx + 1) / len(files_to_process),
+                        text=f"Analysing {uploaded_file.name} ({process_idx + 1}/{len(files_to_process)})…"
+                    )
+
+                try:
+                    exif_data = extract_exif(raw_bytes)
+                    bgr_image = decode_image_bytes(raw_bytes)
+
+                except Exception as e:
+                    batch_errors.append((uploaded_file.name, f"Could not read file: {e}"))
+                    continue
+
+                label = None
+                confidence = None
+                processed_img = None
+                face_image = None
+                face_detected = False
+                face_box = None
+                box_image = bgr_image.copy()
+
+                try:
+                    # Run prediction — face detection happens once inside predict_image.
+                    # We reuse its face_image / face_box rather than calling
+                    # detect_and_crop_face a second time.
+                    prediction = predict_image(raw_bytes, temperature=CALIBRATION_TEMPERATURE)
+                    label = prediction["label"]
+                    confidence = prediction["confidence"]
+                    processed_img = prediction["processed_image"]
+                    raw_pred_array = prediction["raw_prediction"]
+                    face_image = prediction.get("face_image", bgr_image)
+                    face_box = prediction.get("face_box")
+
+                    if face_box is not None:
+                        face_detected = True
+                        x, y, w, h = face_box
+
+                        import cv2
+                        cv2.rectangle(
+                            box_image,
+                            (x, y),
+                            (x + w, y + h),
+                            (94, 219, 120),
+                            3
+                        )
+
+                except PreprocessingError as e:
+                    logger.error(f"PreprocessingError for {uploaded_file.name}: {e}", exc_info=True)
+                    batch_errors.append((uploaded_file.name, "Image preprocessing failed."))
+                    continue
+
+                except ModelExecutionError as e:
+                    logger.error(f"ModelExecutionError for {uploaded_file.name}: {e}", exc_info=True)
+                    batch_errors.append((uploaded_file.name, "Model inference failed."))
+                    continue
+
+                except Exception as e:
+                    logger.error(f"Unexpected error for {uploaded_file.name}: {e}", exc_info=True)
+                    batch_errors.append((uploaded_file.name, f"Unexpected error: {e}"))
+                    continue
+
+                gradcam_image = None
+
+                try:
+                    backbone_model = get_backbone_submodel(model)
+                    last_conv_layer = find_last_conv_layer(backbone_model)
+
+                    heatmap = make_gradcam_heatmap(
+                        processed_img,
+                        backbone_model,
+                        last_conv_layer
+                    )
+
+                    gradcam_image = overlay_heatmap(face_image, heatmap)
+
+                except Exception as e:
+                    logger.warning(f"Grad-CAM failed for {uploaded_file.name}: {e}", exc_info=True)
+
+                ela_image = None
+                ela_score = None
+
+                try:
+                    ela_image = compute_ela(raw_bytes)
+
+                    if ela_image is not None:
+                        ela_score = ela_uniformity_score(ela_image)
+
+                except Exception as e:
+                    logger.warning(f"ELA failed for {uploaded_file.name}: {e}")
+
+                prediction_result = {
+                    "filename": uploaded_file.name,
+                    "label": label,
+                    "confidence": confidence,
+                    "raw_prediction": raw_pred_array,
+                    "bgr_image": bgr_image,
+                    "box_image": box_image,
+                    "face_image": face_image,
+                    "face_detected": face_detected,
+                    "gradcam": gradcam_image,
+                    "is_uncertain": confidence < LOW_CONFIDENCE_THRESHOLD,
+                    "exif": exif_data,
+                    "ela_image": ela_image,
+                    "ela_score": ela_score,
                 }
 
-                st.session_state.prediction_history.append(history_entry)
-                st.session_state.prediction_history_hashes.add(entry_hash)
+                batch_results.append(prediction_result)
+                st.session_state.current_predictions[entry_hash] = prediction_result
 
-                save_prediction(
-                    filename=uploaded_file.name,
-                    verdict=label,
-                    confidence_pct=round(confidence * 100, 1),
-                    face_detected=int(face_detected),
-                    image_hash=entry_hash,
+                entry_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+                if entry_hash not in st.session_state.prediction_history_hashes:
+                    history_entry = {
+                        "Filename": sanitize_csv_value(uploaded_file.name),
+                        "Result": sanitize_csv_value(label),
+                        "Confidence (%)": f"{confidence * 100:.1f}",
+                        "Timestamp": entry_timestamp,
+                        "_hash": entry_hash,
+                    }
+
+                    st.session_state.prediction_history.append(history_entry)
+                    st.session_state.prediction_history_hashes.add(entry_hash)
+
+                    save_prediction(
+                        filename=uploaded_file.name,
+                        verdict=label,
+                        confidence_pct=round(confidence * 100, 1),
+                        face_detected=int(face_detected),
+                        image_hash=entry_hash,
+                    )
+
+                    while len(st.session_state.prediction_history) > MAX_HISTORY_ENTRIES:
+                        old = st.session_state.prediction_history.pop(0)
+                        old_hash = old.get("_hash")
+
+                        if old_hash and old_hash in st.session_state.prediction_history_hashes:
+                            st.session_state.prediction_history_hashes.remove(old_hash)
+
+                st.session_state.prediction_csv = None
+
+            if progress_bar is not None:
+                progress_bar.empty()
+
+            if batch_results:
+                total = len(batch_results)
+                n_real = sum(1 for r in batch_results if r["label"] == "Real")
+                n_fake = total - n_real
+                avg_conf = sum(r["confidence"] for r in batch_results) / total
+
+                st.markdown("#### 📋 Batch Summary")
+
+                s_col1, s_col2, s_col3, s_col4 = st.columns(4)
+                s_col1.metric("Total Analysed", total)
+                s_col2.metric("✅ Real", n_real)
+                s_col3.metric("🚨 Fake", n_fake)
+                s_col4.metric("Avg Confidence", f"{avg_conf * 100:.1f}%")
+
+                st.markdown("---")
+
+            for res in batch_results:
+                is_uncertain = res["is_uncertain"]
+
+                if is_uncertain:
+                    icon = "🟡"
+                elif res["label"] == "Real":
+                    icon = "🟢"
+                else:
+                    icon = "🔴"
+
+                expander_label = (
+                    f"{icon} {res['filename']} — {res['label']} "
+                    f"({res['confidence'] * 100:.1f}%)"
                 )
 
-                while len(st.session_state.prediction_history) > MAX_HISTORY_ENTRIES:
-                    old = st.session_state.prediction_history.pop(0)
-                    old_hash = old.get("_hash")
+                with st.expander(expander_label, expanded=(len(batch_results) == 1)):
+                    img_col, result_col = st.columns([1.3, 1])
 
-                    if old_hash and old_hash in st.session_state.prediction_history_hashes:
-                        st.session_state.prediction_history_hashes.remove(old_hash)
-
-            st.session_state.prediction_csv = None
-
-        if progress_bar is not None:
-            progress_bar.empty()
-
-        if batch_results:
-            total = len(batch_results)
-            n_real = sum(1 for r in batch_results if r["label"] == "Real")
-            n_fake = total - n_real
-            avg_conf = sum(r["confidence"] for r in batch_results) / total
-
-            st.markdown("#### 📋 Batch Summary")
-
-            s_col1, s_col2, s_col3, s_col4 = st.columns(4)
-            s_col1.metric("Total Analysed", total)
-            s_col2.metric("✅ Real", n_real)
-            s_col3.metric("🚨 Fake", n_fake)
-            s_col4.metric("Avg Confidence", f"{avg_conf * 100:.1f}%")
-
-            st.markdown("---")
-
-        for res in batch_results:
-            is_uncertain = res["is_uncertain"]
-
-            if is_uncertain:
-                icon = "🟡"
-            elif res["label"] == "Real":
-                icon = "🟢"
-            else:
-                icon = "🔴"
-
-            expander_label = (
-                f"{icon} {res['filename']} — {res['label']} "
-                f"({res['confidence'] * 100:.1f}%)"
-            )
-
-            with st.expander(expander_label, expanded=(len(batch_results) == 1)):
-                img_col, result_col = st.columns([1.3, 1])
-
-                with img_col:
-                    if res["face_detected"]:
-                        st.image(
-                            res["box_image"],
-                            channels="BGR",
-                            caption="Uploaded image (face detected)",
-                            use_container_width=True,
-                        )
-
-                        st.markdown(
-                            "<div style='margin-top: 10px; margin-bottom: 5px; font-weight: 600;'>🔍 Model Input Analysis</div>",
-                            unsafe_allow_html=True
-                        )
-
-                        crop_col1, crop_col2 = st.columns(2)
-
-                        with crop_col1:
+                    with img_col:
+                        if res["face_detected"]:
                             st.image(
-                                res["face_image"],
+                                res["box_image"],
                                 channels="BGR",
-                                caption="Detected face region",
+                                caption="Uploaded image (face detected)",
                                 use_container_width=True,
                             )
 
-                        with crop_col2:
+                            st.markdown(
+                                "<div style='margin-top: 10px; margin-bottom: 5px; font-weight: 600;'>🔍 Model Input Analysis</div>",
+                                unsafe_allow_html=True
+                            )
+
+                            crop_col1, crop_col2 = st.columns(2)
+
+                            with crop_col1:
+                                st.image(
+                                    res["face_image"],
+                                    channels="BGR",
+                                    caption="Detected face region",
+                                    use_container_width=True,
+                                )
+
+                            with crop_col2:
+                                if res["gradcam"] is not None:
+                                    st.image(
+                                        res["gradcam"],
+                                        channels="BGR",
+                                        caption="Grad-CAM face details",
+                                        use_container_width=True,
+                                    )
+
+                        else:
+                            st.image(
+                                res["bgr_image"],
+                                channels="BGR",
+                                caption="Uploaded image (no face detected, full image analyzed)",
+                                use_container_width=True,
+                            )
+
                             if res["gradcam"] is not None:
                                 st.image(
                                     res["gradcam"],
                                     channels="BGR",
-                                    caption="Grad-CAM face details",
+                                    caption="Grad-CAM attention map (full image)",
                                     use_container_width=True,
                                 )
 
-                    else:
-                        st.image(
-                            res["bgr_image"],
-                            channels="BGR",
-                            caption="Uploaded image (no face detected, full image analyzed)",
-                            use_container_width=True,
-                        )
-
-                        if res["gradcam"] is not None:
-                            st.image(
-                                res["gradcam"],
-                                channels="BGR",
-                                caption="Grad-CAM attention map (full image)",
-                                use_container_width=True,
+                        if res["ela_image"] is not None:
+                            st.markdown(
+                                "<div style='margin-top:10px; font-weight:600;'>"
+                                "⚡ Error Level Analysis (ELA)"
+                                "</div>",
+                                unsafe_allow_html=True
                             )
 
-                    if res["ela_image"] is not None:
-                        st.markdown(
-                            "<div style='margin-top:10px; font-weight:600;'>"
-                            "⚡ Error Level Analysis (ELA)"
-                            "</div>",
-                            unsafe_allow_html=True
-                        )
+                            ela_col1, ela_col2 = st.columns([1, 2])
 
-                        ela_col1, ela_col2 = st.columns([1, 2])
-
-                        with ela_col1:
-                            st.image(
-                                res["ela_image"],
-                                channels="BGR",
-                                caption="ELA map",
-                                use_container_width=True
-                            )
-
-                        with ela_col2:
-                            score = res["ela_score"]
-
-                            if score is not None:
-                                if score > 0.75:
-                                    ela_verdict = "🔴 High uniformity — AI pattern"
-                                elif score > 0.5:
-                                    ela_verdict = "🟡 Moderate uniformity — uncertain"
-                                else:
-                                    ela_verdict = "🟢 Non-uniform — natural photo pattern"
-
-                                st.markdown(f"**ELA uniformity:** {ela_verdict}")
-                                st.progress(score)
-                                st.caption(
-                                    f"Uniformity score: {score:.2f} (0 = natural, 1 = AI-like). "
-                                    "AI-generated images often show uniform compression error "
-                                    "across all regions."
+                            with ela_col1:
+                                st.image(
+                                    res["ela_image"],
+                                    channels="BGR",
+                                    caption="ELA map",
+                                    use_container_width=True
                                 )
 
-                with result_col:
-                    if is_uncertain:
-                        style_class = "result-uncertain"
-                        headline = "Low Confidence — Uncertain"
-                    elif res["label"] == "Real":
-                        style_class = "result-real"
-                        headline = "Authentic image"
-                    else:
-                        style_class = "result-fake"
-                        headline = "Deepfake suspected"
+                            with ela_col2:
+                                score = res["ela_score"]
 
-                    st.markdown(
-                        f"<div class='{style_class}' style='padding-left:0.8rem;'>",
-                        unsafe_allow_html=True,
-                    )
+                                if score is not None:
+                                    if score > 0.75:
+                                        ela_verdict = "🔴 High uniformity — AI pattern"
+                                    elif score > 0.5:
+                                        ela_verdict = "🟡 Moderate uniformity — uncertain"
+                                    else:
+                                        ela_verdict = "🟢 Non-uniform — natural photo pattern"
 
-                    st.markdown(f"### {icon} {headline}")
-                    st.markdown(f"**Model prediction:** {res['label']}")
-                    st.progress(res["confidence"])
-                    st.caption(f"Confidence: {res['confidence'] * 100:.1f}%")
+                                    st.markdown(f"**ELA uniformity:** {ela_verdict}")
+                                    st.progress(score)
+                                    st.caption(
+                                        f"Uniformity score: {score:.2f} (0 = natural, 1 = AI-like). "
+                                        "AI-generated images often show uniform compression error "
+                                        "across all regions."
+                                    )
 
-                    st.markdown("---")
-                    st.markdown("#### 🔍 Metadata Analysis")
+                    with result_col:
+                        if is_uncertain:
+                            style_class = "result-uncertain"
+                            headline = "Low Confidence — Uncertain"
+                        elif res["label"] == "Real":
+                            style_class = "result-real"
+                            headline = "Authentic image"
+                        else:
+                            style_class = "result-fake"
+                            headline = "Deepfake suspected"
 
-                    exif = res["exif"]
-
-                    if exif["ai_software_detected"]:
-                        exif_icon = "🔴"
-                        label_text = f"AI software detected: {exif['software']}"
-                    elif not exif["has_exif"]:
-                        exif_icon = "🟡"
-                        label_text = "No EXIF metadata"
-                    else:
-                        exif_icon = "🟢"
-                        label_text = f"Camera: {exif.get('make', '')} {exif.get('model', '')}".strip()
-
-                    st.markdown(f"{exif_icon} **{label_text}**")
-                    st.caption(exif["suspicion_reason"])
-
-                    if exif["has_exif"] and exif["field_count"]:
-                        st.caption(
-                            f"{exif['field_count']} EXIF fields present"
-                            + (" · GPS data present" if exif["gps_present"] else "")
+                        st.markdown(
+                            f"<div class='{style_class}' style='padding-left:0.8rem;'>",
+                            unsafe_allow_html=True,
                         )
 
-                    st.markdown("</div>", unsafe_allow_html=True)
+                        st.markdown(f"### {icon} {headline}")
+                        st.markdown(f"**Model prediction:** {res['label']}")
+                        st.progress(res["confidence"])
+                        st.caption(f"Confidence: {res['confidence'] * 100:.1f}%")
 
-        if batch_errors:
-            st.markdown("---")
-            st.warning(f"⚠️ {len(batch_errors)} file(s) could not be processed:")
+                        st.markdown("---")
+                        st.markdown("#### 🔍 Metadata Analysis")
 
-            for fname, reason in batch_errors:
-                st.error(f"**{fname}** — {reason}")
+                        exif = res["exif"]
 
-    st.markdown("</div>", unsafe_allow_html=True)
+                        if exif["ai_software_detected"]:
+                            exif_icon = "🔴"
+                            label_text = f"AI software detected: {exif['software']}"
+                        elif not exif["has_exif"]:
+                            exif_icon = "🟡"
+                            label_text = "No EXIF metadata"
+                        else:
+                            exif_icon = "🟢"
+                            label_text = f"Camera: {exif.get('make', '')} {exif.get('model', '')}".strip()
+
+                        st.markdown(f"{exif_icon} **{label_text}**")
+                        st.caption(exif["suspicion_reason"])
+
+                        if exif["has_exif"] and exif["field_count"]:
+                            st.caption(
+                                f"{exif['field_count']} EXIF fields present"
+                                + (" · GPS data present" if exif["gps_present"] else "")
+                            )
+
+                        st.markdown("</div>", unsafe_allow_html=True)
+
+            if batch_errors:
+                st.markdown("---")
+                st.warning(f"⚠️ {len(batch_errors)} file(s) could not be processed:")
+
+                for fname, reason in batch_errors:
+                    st.error(f"**{fname}** — {reason}")
+
+        st.markdown("</div>", unsafe_allow_html=True)
+
+elif analysis_mode == "Forensic Comparison":
+            
+            def run_forensic_analysis(uploaded_file):
+                raw_bytes = uploaded_file.read()
+
+                prediction = predict_image(raw_bytes)
+
+                exif_data = extract_exif(raw_bytes)
+
+                ela_image = None
+                ela_score = None
+
+                try:
+                    ela_image = compute_ela(raw_bytes)
+
+                    if ela_image is not None:
+                        ela_score = ela_uniformity_score(ela_image)
+
+                except Exception:
+                    pass
+
+                gradcam_image = None
+
+                try:
+                    bgr_image = decode_image_bytes(raw_bytes)
+
+                    backbone_model = get_backbone_submodel(model)
+                    last_conv_layer = find_last_conv_layer(backbone_model)
+
+                    heatmap = make_gradcam_heatmap(
+                        prediction["processed_image"],
+                        backbone_model,
+                        last_conv_layer
+                    )
+
+                    gradcam_image = overlay_heatmap(
+                        bgr_image,
+                        heatmap
+                    )
+
+                except Exception:
+                    pass
+
+                return {
+                    "filename": uploaded_file.name,
+                    "label": prediction["label"],
+                    "confidence": prediction["confidence"],
+                    "processed_image": prediction["processed_image"],
+                    "exif": exif_data,
+                    "ela_image": ela_image,
+                    "ela_score": ela_score,
+                    "gradcam": gradcam_image,
+                }
+
+            st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
+
+            st.subheader("🆚 Forensic Image Comparison")
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+                image_a = st.file_uploader(
+                    "Upload Image A",
+                    type=["jpg", "jpeg", "png", "webp"],
+                    key="compare_a"
+                )
+
+            with col2:
+                image_b = st.file_uploader(
+                    "Upload Image B",
+                    type=["jpg", "jpeg", "png", "webp"],
+                    key="compare_b"
+                )
+
+            if image_a and image_b:
+
+                result_a = run_forensic_analysis(image_a)
+                image_a.seek(0)
+
+                result_b = run_forensic_analysis(image_b)
+                image_b.seek(0)
+
+                st.markdown("---")
+
+                left, right = st.columns(2) 
+                with left:
+
+                    st.markdown("### 🖼 Image A")
+
+                    st.image(image_a, width="stretch")
+
+                    st.metric(
+                        "Prediction",
+                        result_a["label"]
+                    )
+
+                    st.metric(
+                        "Confidence",
+                        f"{result_a['confidence']*100:.1f}%"
+                    )
+                    if result_a["gradcam"] is not None:
+
+                        st.markdown("#### Grad-CAM")
+
+                        st.image(
+                        result_a["gradcam"],
+                        channels="BGR",
+                        use_column_width=True
+                        )  
+
+                    if result_a["ela_image"] is not None:
+                        st.image(
+                            result_a["ela_image"],
+                            caption="ELA Analysis",
+                            use_column_width=True
+                        )
+
+                    exif_a = result_a["exif"]
+
+                    st.markdown("#### Metadata")
+
+                    st.write(
+                        exif_a["suspicion_reason"]
+                    )
+
+                with right:
+
+                    st.markdown("### 🖼 Image B")
+
+                    st.image(image_b, width="stretch")
+
+                    st.metric(
+                        "Prediction",
+                        result_b["label"]
+                    )
+
+                    st.metric(
+                        "Confidence",
+                        f"{result_b['confidence']*100:.1f}%"
+                    )
+                    if result_b["gradcam"] is not None:
+
+                        st.markdown("#### Grad-CAM")
+
+                        st.image(
+                        result_b["gradcam"],
+                        channels="BGR",
+                        use_column_width=True
+                        )    
+                    
+
+                    if result_b["ela_image"] is not None:
+                        st.image(
+                            result_b["ela_image"],
+                            caption="ELA Analysis",
+                            use_column_width=True
+                        )
+
+                    exif_b = result_b["exif"]
+
+                    st.markdown("#### Metadata")
+
+                    st.write(
+                        exif_b["suspicion_reason"]
+                    ) 
+                st.markdown("---")
+
+                st.subheader("📊 Comparison Insights")
+                st.markdown("### 🧾 Metadata Comparison")
+
+                confidence_diff = abs(
+                    result_a["confidence"] -
+                    result_b["confidence"]
+                )
+
+                st.metric(
+                    "Confidence Difference",
+                    f"{confidence_diff*100:.1f}%"
+                )
+
+                if result_a["label"] != result_b["label"]:
+                    st.warning(
+                        "Classification mismatch detected."
+                    )
+                else:
+                    st.success(
+                        "Both images received the same classification."
+                    )
+
+                if result_a["confidence"] > result_b["confidence"]:
+                    st.info(
+                        f"🟥 {result_a['filename']} has the stronger prediction confidence."
+                    )
+                else:
+                    st.info(
+                        f"🟥 {result_b['filename']} has the stronger prediction confidence."
+                    )
+# ------------------ EXIF COMPARISON ----------------
+
+                exif_a = result_a["exif"]
+                exif_b = result_b["exif"]
+
+                comparison_rows = [
+                    {
+                        "Field": "Has EXIF",
+                        "Image A": exif_a.get("has_exif", "N/A"),
+                        "Image B": exif_b.get("has_exif", "N/A"),
+                    },
+                    {
+                        "Field": "EXIF Field Count",
+                        "Image A": exif_a.get("field_count", "N/A"),
+                        "Image B": exif_b.get("field_count", "N/A"),
+                    },
+                    {
+                        "Field": "Software",
+                        "Image A": exif_a.get("software", "N/A"),
+                        "Image B": exif_b.get("software", "N/A"),
+                    },
+                    {
+                        "Field": "Camera Make",
+                        "Image A": exif_a.get("make", "N/A"),
+                        "Image B": exif_b.get("make", "N/A"),
+                    },
+                    {
+                        "Field": "Camera Model",
+                        "Image A": exif_a.get("model", "N/A"),
+                        "Image B": exif_b.get("model", "N/A"),
+                    },
+                    {
+                        "Field": "Capture Date",
+                        "Image A": exif_a.get("datetime", "N/A"),
+                        "Image B": exif_b.get("datetime", "N/A"),
+                    },
+                    {
+                        "Field": "GPS Present",
+                        "Image A": exif_a.get("gps_present", "N/A"),
+                        "Image B": exif_b.get("gps_present", "N/A"),
+                    },
+                    {
+                        "Field": "AI Software Detected",
+                        "Image A": exif_a.get("ai_software_detected", "N/A"),
+                        "Image B": exif_b.get("ai_software_detected", "N/A"),
+                    },
+                    {
+                        "Field": "Suspicious",
+                        "Image A": exif_a.get("suspicious", "N/A"),
+                        "Image B": exif_b.get("suspicious", "N/A"),
+                    },
+                ]
+
+                comparison_df = pd.DataFrame(comparison_rows)
+
+                st.dataframe(
+                    comparison_df,
+                    use_container_width=True
+                )
+
+                differences = []
+
+                for row in comparison_rows:
+
+                    if str(row["Image A"]) != str(row["Image B"]):
+                        differences.append(row["Field"])
+
+                if differences:
+
+                    st.warning(
+                        "⚠ Metadata differences detected in: "
+                        + ", ".join(differences)
+                    )
+
+                else:
+
+                    st.success(
+                        "✅ No metadata differences detected."
+                    )
+#------------------------ METADATA VERDICT ----------------
+
+                    st.markdown("### 🚨 Metadata Verdict")
+
+                    if exif_a.get("suspicious", False):
+                        st.warning(
+                            f"Image A: {exif_a.get('suspicion_reason', 'N/A')}"
+                        )
+                    else:
+                        st.success(
+                            f"Image A: {exif_a.get('suspicion_reason', 'N/A')}"
+                        )
+
+                    if exif_b.get("suspicious", False):
+                        st.warning(
+                            f"Image B: {exif_b.get('suspicion_reason', 'N/A')}"
+                        )
+                    else:
+                        st.success(
+                            f"Image B: {exif_b.get('suspicion_reason', 'N/A')}"
+                        )
+                
+
 
 # ----------------------- PREDICTION HISTORY / CSV EXPORT --
 
