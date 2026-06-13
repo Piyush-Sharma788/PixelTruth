@@ -228,11 +228,10 @@ def test_gradcam_end_to_end_pipeline():
         ]
     )
 
-    # Full pipeline
-    bb = get_backbone_submodel(model)
-    assert bb is backbone
+    # Full pipeline — GradCAM uses the full model, not just the backbone
+    assert get_backbone_submodel(model) is backbone
 
-    conv_layer = find_last_conv_layer(bb)
+    conv_layer = find_last_conv_layer(model)
     assert conv_layer.name == "e2e_conv2"
 
     img = np.random.rand(1, 96, 96, 3).astype(np.float32)
