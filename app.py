@@ -5,7 +5,6 @@ from datetime import datetime
 import streamlit as st
 from preprocessing import (
     decode_image_bytes,
-    preprocess_image_bytes,
     detect_and_crop_face,
 )
 import logging
@@ -13,7 +12,13 @@ import hashlib
 
 from history import init_db, save_prediction, load_history, clear_history
 from exif_analysis import extract_exif
-from gradcam import get_backbone_submodel, make_gradcam_heatmap, overlay_heatmap
+from gradcam import (
+    get_backbone_submodel,
+    find_last_conv_layer,
+    make_gradcam_heatmap,
+    overlay_heatmap,
+    gradcam_available,
+)
 from ela_analysis import compute_ela, ela_uniformity_score
 
 from exceptions import (
@@ -21,11 +26,7 @@ from exceptions import (
     ModelExecutionError,
 )
 
-from inference import (
-    preprocess_image,
-    preprocess_uploaded_image as _preprocess_uploaded_image,
-    find_last_conv_layer,
-)
+from predict import preprocess_image
 
 from predict import predict_image as _shared_predict_image
 
@@ -43,7 +44,8 @@ from metrics import (
     get_total_images,
 )
 
-from utils.model_loader import load_cached_model, get_model_mtime
+from utils.model_loader import load_cached_model
+from config import LOW_CONFIDENCE_THRESHOLD as DEFAULT_LOW_CONFIDENCE_THRESHOLD
 
 logging.basicConfig(
     level=logging.INFO,
@@ -146,7 +148,7 @@ LOW_CONFIDENCE_THRESHOLD = st.sidebar.slider(
     "Confidence Threshold",
     min_value=0.50,
     max_value=1.00,
-    value=0.70,
+    value=DEFAULT_LOW_CONFIDENCE_THRESHOLD,
     step=0.05,
     help="Predictions with confidence below this threshold will be flagged as uncertain."
 )
@@ -164,11 +166,11 @@ MAX_HISTORY_ENTRIES = 500
 # ----------------------- LOAD MODEL ------------------------
 
 try:
-    with st.spinner("Loading AI model..."):
-        model = load_cached_model(get_model_mtime())
+    with st.spinner("Loading Hugging Face model..."):
+        _processor, hf_model = load_cached_model()
 
     init_db()
-    st.success("Model initialized successfully.")
+    st.success(f"Hugging Face model loaded successfully.")
 
 except Exception as e:
     logger.error(
@@ -178,21 +180,8 @@ except Exception as e:
 
     st.error(f"Error loading model: {str(e)}")
 
-    model = None
+    hf_model = None
 
-
-# ----------------------- IMAGE PIPELINE --------------------
-
-preprocess_uploaded_image = _preprocess_uploaded_image
-
-try:
-    preprocess_uploaded_image.cache_clear = preprocess_image_bytes.cache_clear
-    preprocess_uploaded_image.cache_info = preprocess_image_bytes.cache_info
-
-except Exception:
-    pass
-
-_ = preprocess_image
 
 # Initialise prediction history containers in session state
 if "prediction_history" not in st.session_state:
@@ -337,7 +326,7 @@ with col_right:
             "Upload one or more images on the left to run deepfake detection."
         )
 
-    elif model is None:
+    elif hf_model is None:
         st.error(
             "Model could not be loaded. Detection is unavailable."
         )
@@ -496,20 +485,21 @@ with col_right:
 
             gradcam_image = None
 
-            try:
-                backbone_model = get_backbone_submodel(model)
-                last_conv_layer = find_last_conv_layer(backbone_model)
+            if gradcam_available():
+                try:
+                    backbone_model = get_backbone_submodel(hf_model)
+                    last_conv_layer = find_last_conv_layer(backbone_model)
 
-                heatmap = make_gradcam_heatmap(
-                    processed_img,
-                    backbone_model,
-                    last_conv_layer
-                )
+                    heatmap = make_gradcam_heatmap(
+                        processed_img,
+                        backbone_model,
+                        last_conv_layer
+                    )
 
-                gradcam_image = overlay_heatmap(face_image, heatmap)
+                    gradcam_image = overlay_heatmap(face_image, heatmap)
 
-            except Exception as e:
-                logger.warning(f"Grad-CAM failed for {uploaded_file.name}: {e}", exc_info=True)
+                except Exception as e:
+                    logger.warning(f"Grad-CAM failed for {uploaded_file.name}: {e}", exc_info=True)
 
             ela_image = None
             ela_score = None
