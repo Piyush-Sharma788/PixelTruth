@@ -326,6 +326,21 @@ def test_rate_limiting_is_enforced(monkeypatch):
     api_main.limiter.limiter.storage.reset()
 
 
+def test_async_endpoint_rejects_missing_api_key(monkeypatch):
+    monkeypatch.setattr(api_main, "API_KEY", "secret-key")
+    monkeypatch.setattr(
+        api_main,
+        "predict_image",
+        lambda _bytes, **kwargs: pytest.fail("should not reach prediction without auth"),
+    )
+    client = TestClient(api_main.app)
+    response = client.post(
+        "/api/detect/async",
+        files={"file": ("sample.png", b"data", "image/png")},
+    )
+    assert response.status_code == 401
+
+
 def test_rate_limiting_is_enforced_async(monkeypatch):
     # Disable API key auth
     monkeypatch.setattr(api_main, "API_KEY", "")
