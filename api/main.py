@@ -109,10 +109,10 @@ def _format_inference_response(result: dict) -> dict:
     }
 
 
-def _run_inference_task(task_id: str, image_bytes: bytes) -> None:
+def _run_inference_task(task_id: str, image_bytes: bytes, temperature: float = 1.0) -> None:
     task_store.mark_running(task_id)
     try:
-        result = predict_image(image_bytes)
+        result = predict_image(image_bytes, temperature=temperature)
         task_store.mark_completed(task_id, result)
     except Exception as exc:
         logger.error("Background inference task failed", exc_info=exc)
@@ -131,9 +131,14 @@ def _verify_api_key(request: Request) -> None:
 
 @app.post("/api/detect")
 @limiter.limit(RATE_LIMIT)
-async def detect_image(request: Request, file: UploadFile = File(...)):
+async def detect_image(
+    request: Request,
+    file: UploadFile = File(...),
+    temperature: float = 1.0,
+):
     """
     Accepts an uploaded image file and returns deepfake detection results.
+    Optional `temperature` parameter controls confidence calibration (default: 1.0).
     """
     _verify_api_key(request)
 
@@ -142,7 +147,7 @@ async def detect_image(request: Request, file: UploadFile = File(...)):
 
     try:
         image_bytes = await _read_image_bytes(file)
-        result = await asyncio.to_thread(predict_image, image_bytes)
+        result = await asyncio.to_thread(predict_image, image_bytes, temperature=temperature)
         return _format_inference_response(result)
 
     except HTTPException:
@@ -164,6 +169,7 @@ async def detect_image_async(
     request: Request,
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
+    temperature: float = 1.0,
 ):
     _verify_api_key(request)
     if not file.content_type or not file.content_type.startswith("image/"):
@@ -172,7 +178,7 @@ async def detect_image_async(
     try:
         image_bytes = await _read_image_bytes(file)
         task_id = task_store.create_task()
-        background_tasks.add_task(_run_inference_task, task_id, image_bytes)
+        background_tasks.add_task(_run_inference_task, task_id, image_bytes, temperature)
         return {"task_id": task_id}
 
     except HTTPException:

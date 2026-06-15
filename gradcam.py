@@ -1,5 +1,31 @@
 import numpy as np
 import cv2
+from config import IMAGE_SIZE
+
+
+def find_last_conv_layer(model):
+    """Recursively search for the last convolutional layer in the model."""
+    layers = getattr(model, "layers", None) or []
+    for layer in reversed(layers):
+        if hasattr(layer, "layers") and getattr(layer, "layers"):
+            try:
+                return find_last_conv_layer(layer)
+            except ValueError:
+                continue
+
+        clsname = layer.__class__.__name__
+        if "Conv" in clsname:
+            return layer
+
+    try:
+        for layer in reversed(list(model._flatten_layers())):
+            clsname = layer.__class__.__name__
+            if "Conv" in clsname:
+                return layer
+    except Exception:
+        pass
+
+    raise ValueError("No convolutional layer found in the provided model")
 
 
 def get_backbone_submodel(model):
@@ -147,6 +173,33 @@ def make_gradcam_heatmap(img_array, model, last_conv_layer, pred_index=None):
                     current = layer(current)
             predictions = current
 
+            if pred_index is None:
+                pred_index = tf.argmax(predictions[0])
+            class_channel = predictions[:, pred_index]
+    else:
+        try:
+            conv_output = last_conv_layer.output
+        except Exception:
+            try:
+                conv_output = last_conv_layer.outputs[0]
+            except Exception:
+                conv_output = last_conv_layer.get_output_at(0)
+
+        try:
+            model_output = model.output
+        except Exception:
+            try:
+                model_output = model.outputs[0]
+            except Exception:
+                model_output = model.get_output_at(0)
+
+        grad_model = tf.keras.models.Model(
+            model.inputs, [conv_output, model_output]
+        )
+
+        with tf.GradientTape() as tape:
+            conv_outputs, predictions = grad_model(img_array)
+            tape.watch(conv_outputs)
             if pred_index is None:
                 pred_index = tf.argmax(predictions[0])
             class_channel = predictions[:, pred_index]
