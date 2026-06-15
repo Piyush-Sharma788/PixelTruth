@@ -60,6 +60,29 @@ def test_decode_prediction_rejects_unknown_output_shape():
         predict.decode_prediction(np.array([[0.1, 0.2, 0.7]]))
 
 
+def test_cli_accepts_image_path_and_returns_prediction(
+    monkeypatch, tmp_path, capsys
+):
+    image_path = tmp_path / "image.png"
+    image_path.write_bytes(image_bytes())
+    monkeypatch.setattr(
+        predict, "load_cached_model", lambda *args, **kwargs: FakeModel([[0.8]])
+    )
+
+    exit_code = predict.main([str(image_path)])
+    assert exit_code == 0
+    captured = capsys.readouterr().out
+    assert "Prediction" in captured
+    assert "Confidence" in captured
+
+
+def test_cli_rejects_nonexistent_path(capsys):
+    exit_code = predict.main(["/nonexistent/image.png"])
+    assert exit_code == 1
+    captured = capsys.readouterr().err
+    assert "FileNotFoundError" in captured or "No such file" in captured or "not found" in captured
+
+
 def test_cli_json_does_not_attempt_to_serialize_processed_image(
     monkeypatch, tmp_path, capsys
 ):
