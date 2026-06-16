@@ -1,17 +1,17 @@
 import asyncio
 import logging
 import time
-from fastapi import BackgroundTasks, FastAPI, UploadFile, File, HTTPException, Request
+from fastapi import BackgroundTasks, FastAPI, UploadFile, File, HTTPException, Request, Query 
 import os
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse 
 from slowapi import Limiter
 from slowapi.util import get_remote_address
-from slowapi.errors import RateLimitExceeded
+from slowapi.errors import RateLimitExceeded 
 
 # Import our unified predict pipeline
-from predict import predict_image
-from config import LOW_CONFIDENCE_THRESHOLD
+from predict import predict_image 
+from config import LOW_CONFIDENCE_THRESHOLD 
 from exceptions import PreprocessingError, ModelExecutionError
 from api.task_store import TaskStore, TaskResult
 
@@ -134,7 +134,7 @@ def _verify_api_key(request: Request) -> None:
 async def detect_image(
     request: Request,
     file: UploadFile = File(...),
-    temperature: float = 1.0,
+    temperature: float = Query(default=1.0, gt=0.0, le=100.0), 
 ):
     """
     Accepts an uploaded image file and returns deepfake detection results.
@@ -167,9 +167,9 @@ async def detect_image(
 @limiter.limit(RATE_LIMIT)
 async def detect_image_async(
     request: Request,
-    background_tasks: BackgroundTasks,
+    background_tasks: BackgroundTasks, 
     file: UploadFile = File(...),
-    temperature: float = 1.0,
+    temperature: float = Query(default=1.0, gt=0.0, le=100.0),  
 ):
     _verify_api_key(request)
     if not file.content_type or not file.content_type.startswith("image/"):

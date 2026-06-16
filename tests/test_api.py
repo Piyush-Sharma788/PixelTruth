@@ -369,3 +369,114 @@ def test_rate_limiting_is_enforced_async(monkeypatch):
     # Clear the limiter storage again
     api_main.limiter.limiter.storage.reset()
 
+def test_api_rejects_negative_temperature(monkeypatch):
+    """Test that negative temperature is rejected with 422."""
+    monkeypatch.setattr(api_main, "API_KEY", "")
+    monkeypatch.setattr(
+        api_main,
+        "predict_image",
+        lambda _bytes, **kwargs: pytest.fail("should not reach prediction with invalid temp"),
+    )
+    client = TestClient(api_main.app)
+    
+    response = client.post(
+        "/api/detect?temperature=-5.0",
+        files={"file": ("sample.png", b"data", "image/png")},
+    )
+    assert response.status_code == 422
+
+
+def test_api_rejects_zero_temperature(monkeypatch):
+    """Test that zero temperature is rejected with 422."""
+    monkeypatch.setattr(api_main, "API_KEY", "")
+    monkeypatch.setattr(
+        api_main,
+        "predict_image",
+        lambda _bytes, **kwargs: pytest.fail("should not reach prediction with invalid temp"),
+    )
+    client = TestClient(api_main.app)
+    
+    response = client.post(
+        "/api/detect?temperature=0.0",
+        files={"file": ("sample.png", b"data", "image/png")},
+    )
+    assert response.status_code == 422
+
+
+def test_api_rejects_temperature_above_100(monkeypatch):
+    """Test that temperature > 100 is rejected with 422."""
+    monkeypatch.setattr(api_main, "API_KEY", "")
+    monkeypatch.setattr(
+        api_main,
+        "predict_image",
+        lambda _bytes, **kwargs: pytest.fail("should not reach prediction with invalid temp"),
+    )
+    client = TestClient(api_main.app)
+    
+    response = client.post(
+        "/api/detect?temperature=101.0",
+        files={"file": ("sample.png", b"data", "image/png")},
+    )
+    assert response.status_code == 422 
+
+
+def test_api_accepts_valid_temperature(monkeypatch):
+    """Test that valid temperature (0 < temp <= 100) is accepted."""
+    monkeypatch.setattr(api_main, "API_KEY", "")
+    monkeypatch.setattr(
+        api_main,
+        "predict_image",
+        lambda _bytes, **kwargs: {
+            "label": "Real",
+            "confidence": 0.8,
+            "raw": [0.8],
+        },
+    )
+    client = TestClient(api_main.app)
+    
+    response = client.post(
+        "/api/detect?temperature=1.5",
+        files={"file": ("sample.png", b"data", "image/png")},
+    )
+    assert response.status_code == 200
+    assert response.json()["verdict"] == "Real"
+
+
+def test_async_rejects_invalid_temperature(monkeypatch):
+    """Test that async endpoint rejects invalid temperature with 422."""
+    monkeypatch.setattr(api_main, "API_KEY", "")
+    monkeypatch.setattr(
+        api_main,
+        "predict_image",
+        lambda _bytes, **kwargs: pytest.fail("should not reach prediction with invalid temp"),
+    )
+    client = TestClient(api_main.app)
+    
+    response = client.post(
+        "/api/detect/async?temperature=-5.0",
+        files={"file": ("sample.png", b"data", "image/png")},
+    )
+    assert response.status_code == 422
+
+
+def test_async_accepts_valid_temperature(monkeypatch):
+    """Test that async endpoint accepts valid temperature."""
+    monkeypatch.setattr(api_main, "API_KEY", "")
+    monkeypatch.setattr(
+        api_main,
+        "predict_image",
+        lambda _bytes, **kwargs: {
+            "label": "Fake",
+            "confidence": 0.2,
+            "raw": [0.2], 
+        },
+    )
+    client = TestClient(api_main.app)
+    
+    response = client.post(
+        "/api/detect/async?temperature=2.5",
+        files={"file": ("sample.png", b"data", "image/png")},
+    )
+    assert response.status_code == 202
+    assert "task_id" in response.json() 
+
