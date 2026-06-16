@@ -20,7 +20,15 @@ being fed to the model."""
 LOW_CONFIDENCE_THRESHOLD: float = 0.70
 """Predictions whose winning softmax probability is below this value are
 shown as "Low Confidence — Uncertain" instead of a firm Real/Fake verdict.
-Raise or lower this value to widen or narrow the uncertain band."""
+Raise or lower this value to widen or narrow the uncertain band.
+
+For sigmoid models (single output) the prediction is used directly.
+For softmax models (2 outputs) the max probability is used."""
+
+MODEL_OUTPUT_ACTIVATION: str = "sigmoid"
+"""Activation function of the model's output layer: 'sigmoid' or 'softmax'.
+The evaluation and prediction modules use this to interpret model outputs.
+Default is 'sigmoid' to match the three training scripts."""
 
 # ---------------------------------------------------------------------------
 # Model paths & environment variable keys
