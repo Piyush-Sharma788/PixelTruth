@@ -115,8 +115,8 @@ class TestCollectImagePaths:
 
             assert len(paths) == 7
             assert len(labels) == 7
-            assert labels.count(0) == 3  # Real
-            assert labels.count(1) == 4  # Fake
+            assert labels.count(1) == 3  # Real
+            assert labels.count(0) == 4  # Fake
 
     def test_raises_when_dir_missing(self):
         with pytest.raises(FileNotFoundError, match="Test directory not found"):
