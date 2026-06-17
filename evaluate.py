@@ -149,7 +149,8 @@ def _collect_image_paths(test_data_dir: str) -> tuple[list[str], list[int]]:
     paths : list[str]
         Absolute paths to image files.
     labels : list[int]
-        Ground-truth labels (0 = Real, 1 = Fake).
+        Ground-truth labels (0 = Fake, 1 = Real), matching the Keras
+        alphabetical class ordering used during training.
 
     Raises
     ------
@@ -179,7 +180,7 @@ def _collect_image_paths(test_data_dir: str) -> tuple[list[str], list[int]]:
     paths: list[str] = []
     labels: list[int] = []
 
-    for class_dir, label in [(real_dir, 0), (fake_dir, 1)]:
+    for class_dir, label in [(real_dir, 1), (fake_dir, 0)]:
         class_paths = sorted(
             str(p)
             for p in class_dir.iterdir()
