@@ -101,8 +101,14 @@ def predict_image(
         face_image, face_box = detect_and_crop_face(bgr_image)
         processed = preprocess_image_array(face_image)
     except Exception as exc:
-        logger.error("Image preprocessing failed: %s", exc, exc_info=True)
-        raise PreprocessingError(f"Failed to preprocess image: {exc}") from exc
+        logger.warning("Face detection failed, falling back to full image: %s", exc)
+        face_image = bgr_image
+        face_box = None
+        try:
+            processed = preprocess_image_array(face_image)
+        except Exception as inner_exc:
+            logger.error("Image preprocessing failed: %s", inner_exc, exc_info=True)
+            raise PreprocessingError(f"Failed to preprocess image: {inner_exc}") from inner_exc
 
     try:
         model = load_cached_model(get_model_mtime(model_path), model_path=model_path)

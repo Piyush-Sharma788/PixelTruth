@@ -149,7 +149,8 @@ def _collect_image_paths(test_data_dir: str) -> tuple[list[str], list[int]]:
     paths : list[str]
         Absolute paths to image files.
     labels : list[int]
-        Ground-truth labels (0 = Real, 1 = Fake).
+        Ground-truth labels (0 = Fake, 1 = Real), matching the Keras
+        alphabetical class ordering used during training.
 
     Raises
     ------
@@ -179,7 +180,7 @@ def _collect_image_paths(test_data_dir: str) -> tuple[list[str], list[int]]:
     paths: list[str] = []
     labels: list[int] = []
 
-    for class_dir, label in [(real_dir, 0), (fake_dir, 1)]:
+    for class_dir, label in [(real_dir, 1), (fake_dir, 0)]:
         class_paths = sorted(
             str(p)
             for p in class_dir.iterdir()
@@ -269,7 +270,7 @@ def run_evaluation(
     # Predicted class: argmax across softmax outputs
     y_pred = np.argmax(y_prob, axis=1)
 
-    # Probability of the positive class (Fake = class 1) for ROC
+    # Probability of the positive class (Real = class 1) for ROC
     y_scores = y_prob[:, 1]
 
     # 4. Compute metrics with scikit-learn
@@ -283,10 +284,10 @@ def run_evaluation(
     roc_auc = _auc(fpr, tpr)
 
     # Per-class statistics
-    n_real = int(np.sum(y_true_arr == 0))
-    n_fake = int(np.sum(y_true_arr == 1))
-    real_correct = int(cm[0, 0])
-    fake_correct = int(cm[1, 1])
+    n_real = int(np.sum(y_true_arr == 1))
+    n_fake = int(np.sum(y_true_arr == 0))
+    real_correct = int(cm[1, 1])
+    fake_correct = int(cm[0, 0])
 
     results = {
         "accuracy": round(acc * 100, 2),
