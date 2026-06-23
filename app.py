@@ -361,34 +361,7 @@ if analysis_mode == "Batch Analysis":
             if "current_predictions" not in st.session_state:
                 st.session_state.current_predictions = {}
 
-            progress_bar = st.progress(0, text="Analysing images…")
-
- feature/forensic-comparison
-
-            # Check if already processed
-            if entry_hash in st.session_state.current_predictions:
-                cached_res = st.session_state.current_predictions[entry_hash]
-                
-                calibrated_pred = temperature_scale(cached_res["raw_prediction"], temperature=CALIBRATION_TEMPERATURE)
-                label, confidence, raw_scores = decode_prediction(calibrated_pred)
-                
-                # Update dynamic fields
-                cached_res["label"] = label
-                cached_res["confidence"] = confidence
-                cached_res["raw"] = raw_scores
-                cached_res["is_uncertain"] = confidence < LOW_CONFIDENCE_THRESHOLD
-                
-                batch_results.append(cached_res)
-                continue
-main
-
             for idx, uploaded_file in enumerate(uploaded_files):
-                progress_bar.progress(
-                    (idx + 1) / len(uploaded_files),
-                    text=f"Analysing {uploaded_file.name} ({idx + 1}/{len(uploaded_files)})…"
-                )
-
-feature/forensic-comparison
                 if uploaded_file.size > MAX_FILE_SIZE_BYTES:
                     batch_errors.append((
                         uploaded_file.name,
@@ -411,51 +384,6 @@ feature/forensic-comparison
             st.session_state.current_predictions = {
                 h: res for h, res in st.session_state.current_predictions.items() if h in uploaded_hashes
             }
-            try:
-                exif_data = extract_exif(raw_bytes)
-                bgr_image = decode_image_bytes(raw_bytes)
-
-            except Exception as e:
-                batch_errors.append((uploaded_file.name, f"Could not read file: {e}"))
-                continue
-
-            label = None
-            confidence = None
-            processed_img = None
-            face_image = None
-            face_detected = False
-            face_box = None
-            box_image = bgr_image.copy()
-
-            try:
-                # Run prediction — face detection happens once inside predict_image.
-                # We reuse its face_image / face_box rather than calling
-                # detect_and_crop_face a second time.
-                prediction = predict_image(raw_bytes, temperature=CALIBRATION_TEMPERATURE)
-                label = prediction["label"]
-                confidence = prediction["confidence"]
-                processed_img = prediction["processed_image"]
-                raw_pred_array = prediction["raw_prediction"]
-                face_image = prediction.get("face_image", bgr_image)
-                face_box = prediction.get("face_box")
-
-                if face_box is not None:
-                    face_detected = True
-                    x, y, w, h = face_box
-
-                    cv2.rectangle(
-                        box_image,
-                        (x, y),
-                        (x + w, y + h),
-                        (94, 219, 120),
-                        3
-                    )
-
-            except PreprocessingError as e:
-                logger.error(f"PreprocessingError for {uploaded_file.name}: {e}", exc_info=True)
-                batch_errors.append((uploaded_file.name, "Image preprocessing failed."))
-                continue
- main
 
             # Determine which files need processing
             files_to_process = [
@@ -565,7 +493,7 @@ feature/forensic-comparison
 
                     heatmap = make_gradcam_heatmap(
                         processed_img,
-                        backbone_model,
+                        model,
                         last_conv_layer
                     )
 
@@ -846,7 +774,7 @@ elif analysis_mode == "Forensic Comparison":
 
                     heatmap = make_gradcam_heatmap(
                         prediction["processed_image"],
-                        backbone_model,
+                        model,
                         last_conv_layer
                     )
 
