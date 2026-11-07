@@ -1,18 +1,22 @@
-streamlit>=1.39.0
+# Runtime dependencies (Python 3.11). Versions are the ones the test suite
+# and the bundled model were verified with.
 tensorflow==2.16.1
-# keras removed to avoid conflict with tensorflow's built-in keras
+keras==3.15.1
+h5py==3.16.0
 numpy==1.26.4
 pandas==2.2.2
 pillow==10.3.0
 opencv-python-headless==4.9.0.80
-scikit-learn==1.4.2
-matplotlib==3.8.3
-seaborn==0.13.1
-plotly>=5.15.0
-fastapi>=0.100.0
-uvicorn>=0.23.0
-python-multipart>=0.0.6
-slowapi>=0.1.9
+streamlit==1.60.0
+plotly==7.1.0
+python-dotenv==1.2.4
+fastapi==0.162.0
+uvicorn==0.54.0
+python-multipart==0.0.33
+slowapi==0.1.10
 pydantic==2.12.3
 pydantic-core==2.41.4
-httpx>=0.24.0
+httpx==0.28.1
+# Training / dataset preparation only
+matplotlib==3.8.3
+pyarrow==24.0.0

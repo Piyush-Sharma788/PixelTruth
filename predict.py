@@ -10,16 +10,16 @@ from pathlib import Path
 
 import numpy as np
 
-from config import SUPPORTED_EXTENSIONS
+from config import DEFAULT_TEMPERATURE, LOW_CONFIDENCE_THRESHOLD, SUPPORTED_EXTENSIONS
 from exceptions import ModelExecutionError, PreprocessingError
-from preprocessing import preprocess_image_array, preprocess_image_bytes, decode_image_bytes, detect_and_crop_face
+from preprocessing import decode_image_bytes, detect_and_crop_face, prepare_model_input
 from utils.model_loader import load_cached_model, get_model_mtime
 
 logger = logging.getLogger(__name__)
 
 
-def preprocess_image(image_input: str | Path | bytes | np.ndarray) -> np.ndarray:
-    """Return an RGB normalized batch for a path, raw bytes, or BGR array after face detection."""
+def _to_bgr_image(image_input: str | Path | bytes | np.ndarray) -> np.ndarray:
+    """Decode a path, raw bytes, or BGR array into a BGR numpy array."""
     if isinstance(image_input, (str, Path)):
         image_path = Path(image_input)
         if not image_path.exists():
@@ -30,21 +30,31 @@ def preprocess_image(image_input: str | Path | bytes | np.ndarray) -> np.ndarray
                 f"Unsupported file extension '{image_path.suffix.lower()}'. "
                 f"Supported: {supported}"
             )
-        raw_bytes = image_path.read_bytes()
-        bgr_image = decode_image_bytes(raw_bytes)
-    elif isinstance(image_input, bytes):
-        bgr_image = decode_image_bytes(image_input)
-    elif isinstance(image_input, np.ndarray):
-        bgr_image = image_input
-    else:
-        raise TypeError("image_input must be a file path, raw bytes, or numpy array.")
+        return decode_image_bytes(image_path.read_bytes())
+    if isinstance(image_input, bytes):
+        return decode_image_bytes(image_input)
+    if isinstance(image_input, np.ndarray):
+        return image_input
+    raise TypeError("image_input must be a file path, raw bytes, or numpy array.")
 
+
+def _prepare(bgr_image: np.ndarray):
+    """Run the canonical model-input pipeline using this module's face detector.
+
+    The detector is looked up on this module at call time so tests can
+    monkeypatch ``predict.detect_and_crop_face``.
+    """
     try:
-        face_image, _ = detect_and_crop_face(bgr_image)
-        return preprocess_image_array(face_image)
+        return prepare_model_input(bgr_image, face_detector=detect_and_crop_face)
     except Exception as exc:
         logger.error("Image preprocessing failed: %s", exc, exc_info=True)
         raise PreprocessingError(f"Failed to preprocess image: {exc}") from exc
+
+
+def preprocess_image(image_input: str | Path | bytes | np.ndarray) -> np.ndarray:
+    """Return the model-input batch for a path, raw bytes, or BGR array."""
+    batch, _, _ = _prepare(_to_bgr_image(image_input))
+    return batch
 
 
 def decode_prediction(prediction: np.ndarray) -> tuple[str, float, list[float]]:
@@ -72,55 +82,26 @@ def decode_prediction(prediction: np.ndarray) -> tuple[str, float, list[float]]:
 def predict_image(
     image_input: str | Path | bytes | np.ndarray,
     model_path: str | None = None,
-    temperature: float = 1.0,
+    temperature: float = DEFAULT_TEMPERATURE,
 ) -> dict:
     """Run deepfake detection and return a normalized result dictionary."""
     source_path = str(image_input) if isinstance(image_input, (str, Path)) else None
 
-    # Get BGR image
-    if isinstance(image_input, (str, Path)):
-        image_path = Path(image_input)
-        if not image_path.exists():
-            raise FileNotFoundError(f"Image not found: {image_path}")
-        if image_path.suffix.lower() not in SUPPORTED_EXTENSIONS:
-            supported = ", ".join(sorted(SUPPORTED_EXTENSIONS))
-            raise ValueError(
-                f"Unsupported file extension '{image_path.suffix.lower()}'. "
-                f"Supported: {supported}"
-            )
-        raw_bytes = image_path.read_bytes()
-        bgr_image = decode_image_bytes(raw_bytes)
-    elif isinstance(image_input, bytes):
-        bgr_image = decode_image_bytes(image_input)
-    elif isinstance(image_input, np.ndarray):
-        bgr_image = image_input
-    else:
-        raise TypeError("image_input must be a file path, raw bytes, or numpy array.")
-
-    try:
-        face_image, face_box = detect_and_crop_face(bgr_image)
-        processed = preprocess_image_array(face_image)
-    except Exception as exc:
-        logger.warning("Face detection failed, falling back to full image: %s", exc)
-        face_image = bgr_image
-        face_box = None
-        try:
-            processed = preprocess_image_array(face_image)
-        except Exception as inner_exc:
-            logger.error("Image preprocessing failed: %s", inner_exc, exc_info=True)
-            raise PreprocessingError(f"Failed to preprocess image: {inner_exc}") from inner_exc
+    bgr_image = _to_bgr_image(image_input)
+    processed, face_image, face_box = _prepare(bgr_image)
 
     try:
         model = load_cached_model(get_model_mtime(model_path), model_path=model_path)
         prediction = model.predict(processed, verbose=0)
         
-        # Decode raw prediction for raw confidence
-        _, raw_confidence, _ = decode_prediction(prediction)
-        
-        # Apply temperature scaling for calibrated confidence
+        # Uncalibrated model output (reported as "raw" / "raw_scores").
+        _, raw_confidence, raw_scores = decode_prediction(prediction)
+
+        # Temperature scaling only softens/sharpens confidence; it can never
+        # flip the label because it is monotonic around 0.5.
         from calibration import temperature_scale
         calibrated_prediction = temperature_scale(prediction, temperature=temperature)
-        label, confidence, raw_scores = decode_prediction(calibrated_prediction)
+        label, confidence, _ = decode_prediction(calibrated_prediction)
     except ModelExecutionError:
         raise
     except Exception as exc:
@@ -167,14 +148,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--temperature",
         type=float,
-        default=1.5,
-        help="confidence calibration temperature (>0, default: 1.5)",
+        default=DEFAULT_TEMPERATURE,
+        help=f"confidence calibration temperature (>0, default: {DEFAULT_TEMPERATURE})",
     )
     parser.add_argument(
         "--threshold",
         type=float,
-        default=0.70,
-        help="confidence threshold for low-confidence warnings (default: 0.70)",
+        default=LOW_CONFIDENCE_THRESHOLD,
+        help=f"confidence threshold for low-confidence warnings (default: {LOW_CONFIDENCE_THRESHOLD})",
     )
     parser.add_argument("--json", dest="output_json", action="store_true")
     parser.add_argument("--quiet", action="store_true")

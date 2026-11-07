@@ -100,6 +100,14 @@ class TaskStore:
             self._tasks[task_id] = task
         return task_id
 
+    def active_count(self) -> int:
+        """Number of tasks still PENDING or RUNNING."""
+        with self._lock:
+            return sum(
+                1 for t in self._tasks.values()
+                if t.status in (TaskStatus.PENDING, TaskStatus.RUNNING)
+            )
+
     def get_task(self, task_id: str) -> Optional[TaskResult]:
         """Return the current snapshot for *task_id*, or ``None``."""
         with self._lock:

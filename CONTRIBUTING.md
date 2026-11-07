@@ -34,10 +34,7 @@ Click on the **Fork** button at the top-right corner of the repository page.
 
 ```bash
 git clone https://github.com/your-username/PixelTruth.git
-
-## 🤝 How to Contribute
-
-Follow these steps to contribute to the project:
+```
 
 ### 3. Move into the Project Directory
 
@@ -63,9 +60,15 @@ git checkout -b fix/upload-error
 
 ### 5. Install Dependencies
 
+Python **3.11** is required (TensorFlow 2.16).
+
 ```bash
-pip install -r requirements.txt
+python3.11 -m venv venv
+source venv/bin/activate          # Windows: venv\Scripts\activate
+pip install -r requirements-dev.txt
 ```
+
+The trained model (`deepfake_detection_model.h5`) is included in the repository, so no download is needed.
 
 ### 6. Run the Project Locally
 
@@ -251,6 +254,18 @@ git commit -m "fixed stuff"
 
 Before submitting a PR:
 
+- Run the test suite and make sure it passes:
+
+```bash
+python -m pytest tests -q
+```
+
+  `tests/test_real_model.py` uses the real bundled model. Its accuracy and API
+  checks also need the labelled test faces; create them with
+  `python scripts/prepare_dataset.py --train-shards 0 --val-shards 0`.
+- Never replace real model output with mocked or random predictions outside of `tests/`.
+- If you retrain the model, re-run `python evaluate.py --test-dir data/faces/test`
+  and commit the regenerated `metrics_cache.json` and `deepfake_detection_model.json`.
 - Run the Streamlit app locally
 - Upload sample images and check predictions
 - Make sure no errors appear in the terminal

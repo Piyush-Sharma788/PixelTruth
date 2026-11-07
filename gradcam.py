@@ -88,6 +88,27 @@ def get_backbone_submodel(model):
 
 
 
+def _class_score(predictions, pred_index=None):
+    """Return the score whose gradient Grad-CAM should explain.
+
+    * Softmax / multi-output: the selected (default: argmax) class column.
+    * Single sigmoid output (P(Real)): explain the *predicted* class, i.e.
+      ``p`` when the verdict is Real and ``1 - p`` when it is Fake.  Without
+      this, a Fake verdict would highlight evidence for "Real".
+    """
+    import tensorflow as tf
+
+    if predictions.shape[-1] == 1:
+        p = predictions[:, 0]
+        if pred_index is None:
+            pred_index = 1 if float(p[0]) >= 0.5 else 0
+        return p if int(pred_index) == 1 else 1.0 - p
+
+    if pred_index is None:
+        pred_index = tf.argmax(predictions[0])
+    return predictions[:, pred_index]
+
+
 def make_gradcam_heatmap(img_array, model, last_conv_layer, pred_index=None):
     # Import TensorFlow lazily to avoid import-time side effects during tests
     import tensorflow as tf
@@ -172,10 +193,7 @@ def make_gradcam_heatmap(img_array, model, last_conv_layer, pred_index=None):
                 else:
                     current = layer(current)
             predictions = current
-
-            if pred_index is None:
-                pred_index = tf.argmax(predictions[0])
-            class_channel = predictions[:, pred_index]
+            class_channel = _class_score(predictions, pred_index)
     else:
         try:
             conv_output = last_conv_layer.output
@@ -200,9 +218,7 @@ def make_gradcam_heatmap(img_array, model, last_conv_layer, pred_index=None):
         with tf.GradientTape() as tape:
             conv_outputs, predictions = grad_model(img_array)
             tape.watch(conv_outputs)
-            if pred_index is None:
-                pred_index = tf.argmax(predictions[0])
-            class_channel = predictions[:, pred_index]
+            class_channel = _class_score(predictions, pred_index)
 
     grads = tape.gradient(class_channel, conv_outputs)
     if grads is None:

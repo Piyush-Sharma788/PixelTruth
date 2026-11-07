@@ -34,8 +34,8 @@ from pathlib import Path
 
 import numpy as np
 
-from preprocessing import preprocess_image_from_path
-from config import SUPPORTED_EXTENSIONS
+from preprocessing import decode_image_bytes, prepare_model_input
+from config import MODEL_VERSION, SUPPORTED_EXTENSIONS
 
 logging.basicConfig(
     level=logging.INFO,
@@ -131,6 +131,45 @@ def _roc_curve(y_true: np.ndarray, y_scores: np.ndarray) -> tuple[np.ndarray, np
     return fpr.astype(float), tpr.astype(float)
 
 
+def _real_probability(y_prob: np.ndarray) -> np.ndarray:
+    """Return P(Real) per sample for sigmoid ``(N, 1)`` or softmax ``(N, 2)`` output.
+
+    Training uses alphabetical class folders, so class 0 = Fake, 1 = Real.
+    A sigmoid output is therefore already P(Real).
+    """
+    y_prob = np.asarray(y_prob, dtype=float)
+    if y_prob.ndim == 1:
+        y_prob = y_prob.reshape(-1, 1)
+    if y_prob.shape[1] == 1:
+        return y_prob[:, 0]
+    if y_prob.shape[1] == 2:
+        return y_prob[:, 1]
+    raise ValueError(
+        f"Unsupported model output shape {y_prob.shape}; expected (N, 1) sigmoid "
+        "or (N, 2) softmax."
+    )
+
+
+def _preprocess_path(path: str) -> np.ndarray:
+    """Load an image file through the exact pipeline used at inference time."""
+    with open(path, "rb") as fh:
+        bgr = decode_image_bytes(fh.read())
+    batch, _, _ = prepare_model_input(bgr)
+    return batch
+
+
+def _thin_curve(fpr: np.ndarray, tpr: np.ndarray, max_points: int = 1000) -> tuple[np.ndarray, np.ndarray]:
+    """Down-sample an ROC curve for storage/plotting, keeping both endpoints.
+
+    The AUC is always computed on the full curve before thinning.
+    """
+    fpr, tpr = np.asarray(fpr), np.asarray(tpr)
+    if fpr.size <= max_points:
+        return fpr, tpr
+    idx = np.unique(np.linspace(0, fpr.size - 1, max_points).round().astype(int))
+    return fpr[idx], tpr[idx]
+
+
 def _auc(x_values: np.ndarray, y_values: np.ndarray) -> float:
     """Compute the area under a curve using the trapezoidal rule."""
     return float(np.trapz(y_values, x_values))
@@ -202,6 +241,7 @@ def run_evaluation(
     test_data_dir: str,
     output_path: str = "metrics_cache.json",
     batch_size: int = 32,
+    model_path: str | None = None,
 ) -> dict:
     """Evaluate the model against a labelled test dataset and save results.
 
@@ -241,7 +281,7 @@ def run_evaluation(
 
         for path, label in zip(batch_paths, batch_labels):
             try:
-                tensor = preprocess_image_from_path(path)
+                tensor = _preprocess_path(path)
                 batch_tensors.append(tensor)
                 batch_valid_labels.append(label)
             except Exception as exc:
@@ -267,11 +307,10 @@ def run_evaluation(
     y_prob = np.concatenate(y_prob_all, axis=0)
     y_true_arr = np.array(valid_y_true)
 
-    # Predicted class: argmax across softmax outputs
-    y_pred = np.argmax(y_prob, axis=1)
-
-    # Probability of the positive class (Real = class 1) for ROC
-    y_scores = y_prob[:, 1]
+    # Probability of the positive class (Real = class 1). Works for both
+    # sigmoid (N, 1) and softmax (N, 2) models.
+    y_scores = _real_probability(y_prob)
+    y_pred = (y_scores >= 0.5).astype(int)
 
     # 4. Compute metrics with scikit-learn
     acc = _accuracy_score(y_true_arr, y_pred)
@@ -282,6 +321,7 @@ def run_evaluation(
 
     fpr, tpr = _roc_curve(y_true_arr, y_scores)
     roc_auc = _auc(fpr, tpr)
+    fpr, tpr = _thin_curve(fpr, tpr)
 
     # Per-class statistics
     n_real = int(np.sum(y_true_arr == 1))
@@ -319,7 +359,10 @@ def run_evaluation(
             "Fake": n_fake,
         },
         "evaluated_at": datetime.now(timezone.utc).isoformat(),
-        "model_path": str(getattr(model, "name", "unknown")),
+        "model_path": str(model_path or getattr(model, "name", "unknown")),
+        "model_version": MODEL_VERSION,
+        "class_index": {"Fake": 0, "Real": 1},
+        "confusion_matrix_layout": "rows = true label, cols = predicted label, order [Fake, Real]",
         "test_data_dir": str(test_data_dir),
         "total_images": len(valid_y_true),
         "skipped_images": skipped,
@@ -426,6 +469,7 @@ def main(argv: list[str] | None = None) -> int:
             test_data_dir=args.test_dir,
             output_path=args.output,
             batch_size=args.batch_size,
+            model_path=str(model_file),
         )
 
         print(f"\n{'='*50}")
