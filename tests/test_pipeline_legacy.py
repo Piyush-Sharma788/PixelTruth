@@ -2,7 +2,7 @@
 Unit tests for the PixelTruth deepfake detection pipeline.
 
 Run with:
-    pytest ptest.py -v
+    pytest tests/test_pipeline_legacy.py -v
 
 These tests exercise the **unified pipeline** directly through ``predict.py``,
 ``preprocessing.py``, and ``config.py``.  There is **no dependency on Streamlit
@@ -145,14 +145,15 @@ class TestPreprocessImageBytes:
         with pytest.raises(Exception):
             preprocessing.preprocess_image_bytes(b"not an image")
 
-    def test_uploaded_bytes_are_not_retained(self):
-        """Uploaded data should not remain in a process-global cache."""
+    def test_uploaded_bytes_cache_is_bounded(self):
+        """Uploads may be cached briefly, but the cache must stay small."""
         preprocessing.preprocess_image_bytes.cache_clear()
-        raw = image_to_png_bytes(make_blank_image())
+        for value in range(10):
+            preprocessing.preprocess_image_bytes(image_to_png_bytes(make_blank_image() + value))
 
-        preprocessing.preprocess_image_bytes(raw)
-
-        assert preprocessing.preprocess_image_bytes.cache_info().currsize == 0
+        info = preprocessing.preprocess_image_bytes.cache_info()
+        assert info.maxsize is not None and info.maxsize <= 8
+        assert info.currsize <= info.maxsize
 
 
 # ---------------------------------------------------------------------------
@@ -222,26 +223,26 @@ class TestPredictImage:
     def test_returns_fake_label_when_class_0_wins(self):
         mock_model = make_mock_model(np.array([[0.9, 0.1]]))
         with patch.object(predict, "load_cached_model", return_value=mock_model):
-            result = predict.predict_image(make_blank_image())
+            result = predict.predict_image(make_blank_image(), temperature=1.0)
         assert result["label"] == "Fake"
 
     def test_returns_real_label_when_class_1_wins(self):
         mock_model = make_mock_model(np.array([[0.1, 0.9]]))
         with patch.object(predict, "load_cached_model", return_value=mock_model):
-            result = predict.predict_image(make_blank_image())
+            result = predict.predict_image(make_blank_image(), temperature=1.0)
         assert result["label"] == "Real"
 
     def test_confidence_is_float_between_0_and_1(self):
         mock_model = make_mock_model(np.array([[0.8, 0.2]]))
         with patch.object(predict, "load_cached_model", return_value=mock_model):
-            result = predict.predict_image(make_blank_image())
+            result = predict.predict_image(make_blank_image(), temperature=1.0)
         assert isinstance(result["confidence"], float)
         assert 0.0 <= result["confidence"] <= 1.0
 
     def test_result_contains_expected_keys(self):
         mock_model = make_mock_model(np.array([[0.7, 0.3]]))
         with patch.object(predict, "load_cached_model", return_value=mock_model):
-            result = predict.predict_image(make_blank_image())
+            result = predict.predict_image(make_blank_image(), temperature=1.0)
         assert "label" in result
         assert "confidence" in result
         assert "raw" in result
@@ -250,7 +251,7 @@ class TestPredictImage:
     def test_model_receives_correct_shape(self):
         mock_model = make_mock_model(np.array([[0.6, 0.4]]))
         with patch.object(predict, "load_cached_model", return_value=mock_model):
-            predict.predict_image(make_blank_image(h=300, w=400))
+            predict.predict_image(make_blank_image(h=300, w=400), temperature=1.0)
         call_args = mock_model.predict.call_args[0][0]
         assert call_args.shape == (1, 96, 96, 3)
 
@@ -258,7 +259,7 @@ class TestPredictImage:
         for pred in [np.array([[0.9, 0.1]]), np.array([[0.1, 0.9]])]:
             mock_model = make_mock_model(pred)
             with patch.object(predict, "load_cached_model", return_value=mock_model):
-                result = predict.predict_image(make_blank_image())
+                result = predict.predict_image(make_blank_image(), temperature=1.0)
             assert result["label"] in ("Real", "Fake")
 
     def test_path_input_includes_image_key(self):
@@ -270,7 +271,7 @@ class TestPredictImage:
         try:
             mock_model = make_mock_model(np.array([[0.8, 0.2]]))
             with patch.object(predict, "load_cached_model", return_value=mock_model):
-                result = predict.predict_image(path)
+                result = predict.predict_image(path, temperature=1.0)
             assert "image" in result
             assert result["image"] == path
         finally:
@@ -308,14 +309,14 @@ class TestLowConfidenceThreshold:
         """predict_image must still return 'Real' even when confidence < threshold."""
         mock_model = make_mock_model(np.array([[0.38, 0.62]]))
         with patch.object(predict, "load_cached_model", return_value=mock_model):
-            result = predict.predict_image(make_blank_image())
+            result = predict.predict_image(make_blank_image(), temperature=1.0)
         assert result["label"] == "Real"
         assert abs(result["confidence"] - 0.62) < 1e-5
 
     def test_low_confidence_fake_label_unchanged(self):
         mock_model = make_mock_model(np.array([[0.55, 0.45]]))
         with patch.object(predict, "load_cached_model", return_value=mock_model):
-            result = predict.predict_image(make_blank_image())
+            result = predict.predict_image(make_blank_image(), temperature=1.0)
         assert result["label"] == "Fake"
         assert abs(result["confidence"] - 0.55) < 1e-5
 
@@ -332,13 +333,13 @@ class TestLowConfidenceThreshold:
     def test_high_confidence_real_not_uncertain(self):
         mock_model = make_mock_model(np.array([[0.08, 0.92]]))
         with patch.object(predict, "load_cached_model", return_value=mock_model):
-            result = predict.predict_image(make_blank_image())
+            result = predict.predict_image(make_blank_image(), temperature=1.0)
         assert result["label"] == "Real"
         assert result["confidence"] >= config.LOW_CONFIDENCE_THRESHOLD
 
     def test_high_confidence_fake_not_uncertain(self):
         mock_model = make_mock_model(np.array([[0.95, 0.05]]))
         with patch.object(predict, "load_cached_model", return_value=mock_model):
-            result = predict.predict_image(make_blank_image())
+            result = predict.predict_image(make_blank_image(), temperature=1.0)
         assert result["label"] == "Fake"
         assert result["confidence"] >= config.LOW_CONFIDENCE_THRESHOLD

@@ -13,10 +13,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
           cache: pip
@@ -24,8 +24,8 @@ jobs:
       - name: Upgrade pip
         run: python -m pip install --upgrade pip
 
-      - name: Install dependencies
-        run: python -m pip install -r requirements.txt pytest httpx
+      - name: Install dependencies (clean install from pinned requirements)
+        run: python -m pip install -r requirements-dev.txt
 
       - name: Check installed packages
         run: python -m pip check
@@ -34,7 +34,20 @@ jobs:
         run: python scripts/check_merge_conflicts.py
 
       - name: Compile Python sources
-        run: python -m compileall .
+        run: python -m compileall -q -x '(venv|data)/' .
 
+      - name: Verify bundled model checksum
+        run: |
+          python - <<'PY'
+          import json, hashlib, pathlib
+          card = json.loads(pathlib.Path("deepfake_detection_model.json").read_text())
+          digest = hashlib.sha256(pathlib.Path(card["file"]).read_bytes()).hexdigest()
+          assert digest == card["sha256"], f"model checksum mismatch: {digest} != {card['sha256']}"
+          print("model sha256 OK:", digest)
+          PY
+
+      # Includes tests/test_real_model.py (bundled model, synthetic input) and
+      # tests/test_app_smoke.py (headless Streamlit start with the real model).
+      # Tests needing the labelled face dataset are skipped in CI.
       - name: Run tests
-        run: python -m pytest tests -q
+        run: python -m pytest tests -q -rs

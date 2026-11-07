@@ -12,6 +12,9 @@ CONFLICT_MARKERS = [
     re.compile(r'^\|\|\|\|\|\|\|(\s|$)')
 ]
 
+BINARY_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.ico', '.webp', '.zip', '.h5', '.pyc', '.npy', '.parquet'}
+
+
 def get_files_to_check():
     """Get list of files tracked by git in the repository."""
     try:
@@ -23,8 +26,11 @@ def get_files_to_check():
             check=True
         )
         files = result.stdout.strip().split('\n')
-        # Filter out binary or empty filenames
-        return [f for f in files if f and os.path.isfile(f)]
+        # Filter out binary (model weights, images) and empty filenames
+        return [
+            f for f in files
+            if f and os.path.isfile(f) and os.path.splitext(f)[1].lower() not in BINARY_EXTS
+        ]
     except (subprocess.SubprocessError, FileNotFoundError):
         # Fallback to manual directory traversal if git is not available
         exclude_dirs = {'.git', '__pycache__', '.pytest_cache', '.ruff_cache', 'venv', '.venv'}

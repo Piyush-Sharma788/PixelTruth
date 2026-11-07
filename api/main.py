@@ -1,6 +1,8 @@
 import asyncio
+import hmac
 import logging
 import time
+from contextlib import asynccontextmanager
 from io import BytesIO
 from fastapi import BackgroundTasks, FastAPI, UploadFile, File, HTTPException, Request, Query 
 import os
@@ -13,7 +15,7 @@ from PIL import Image, UnidentifiedImageError
 
 # Import our unified predict pipeline
 from predict import predict_image 
-from config import LOW_CONFIDENCE_THRESHOLD 
+from config import DEFAULT_TEMPERATURE, LOW_CONFIDENCE_THRESHOLD, MODEL_VERSION
 from exceptions import PreprocessingError, ModelExecutionError
 from api.task_store import TaskStore, TaskResult
 
@@ -40,6 +42,11 @@ API_KEY: str = os.getenv("PIXELTRUTH_API_KEY", "").strip()
 # Rate limiting — 10 requests per minute per client IP
 # ---------------------------------------------------------------------------
 RATE_LIMIT: str = os.getenv("PIXELTRUTH_RATE_LIMIT", "10/minute")
+POLL_RATE_LIMIT: str = os.getenv("PIXELTRUTH_POLL_RATE_LIMIT", "120/minute")
+
+# Maximum number of async tasks that may be queued/running at once. Each one
+# holds its upload bytes in memory until it runs, so this bounds memory use.
+MAX_ACTIVE_TASKS: int = int(os.getenv("PIXELTRUTH_MAX_ACTIVE_TASKS", "32"))
 limiter = Limiter(key_func=get_remote_address)
 
 
@@ -86,10 +93,38 @@ def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
     )
 
 
+_model_status: dict = {"loaded": False, "error": None}
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Load the model once at startup so the first request is not slow and a
+    missing model is reported immediately (via /api/health) instead of on the
+    first upload. Startup does not fail, so health checks remain reachable."""
+    try:
+        from utils.model_loader import get_model_mtime, load_cached_model
+
+        await asyncio.to_thread(load_cached_model, get_model_mtime())
+        _model_status.update(loaded=True, error=None)
+        logger.info("Model loaded at startup")
+    except Exception as exc:  # pragma: no cover - depends on local model file
+        _model_status.update(loaded=False, error=str(exc))
+        logger.error("Model failed to load at startup: %s", exc)
+    yield
+
+
 app = FastAPI(
     title="PixelTruth API",
-    description="Deepfake detection API that classifies an image as Real or Fake.",
-    version="1.0.0",
+    description=(
+        "Deepfake detection API that classifies a face image as Real or "
+        "AI-generated (Fake).\n\n"
+        "* `POST /api/detect` - synchronous detection\n"
+        "* `POST /api/detect/async` + `GET /api/task/{task_id}` - background detection\n"
+        "* `GET /api/health` - liveness and model status\n\n"
+        "If `PIXELTRUTH_API_KEY` is set, send it in the `X-API-Key` header."
+    ),
+    version="2.0.0",
+    lifespan=lifespan,
 )
 
 app.state.limiter = limiter
@@ -120,7 +155,7 @@ def _format_inference_response(result: dict) -> dict:
     }
 
 
-def _run_inference_task(task_id: str, image_bytes: bytes, temperature: float = 1.0) -> None:
+def _run_inference_task(task_id: str, image_bytes: bytes, temperature: float = DEFAULT_TEMPERATURE) -> None:
     task_store.mark_running(task_id)
     try:
         result = predict_image(image_bytes, temperature=temperature)
@@ -133,7 +168,8 @@ def _verify_api_key(request: Request) -> None:
     if not API_KEY:
         return
     provided = request.headers.get("X-API-Key", "")
-    if provided != API_KEY:
+    # Constant-time comparison avoids leaking the key through response timing.
+    if not hmac.compare_digest(provided.encode(), API_KEY.encode()):
         raise HTTPException(
             status_code=401,
             detail="Invalid or missing API key. Set the X-API-Key header.",
@@ -145,7 +181,7 @@ def _verify_api_key(request: Request) -> None:
 async def detect_image(
     request: Request,
     file: UploadFile = File(...),
-    temperature: float = Query(default=1.0, gt=0.0, le=100.0), 
+    temperature: float = Query(default=DEFAULT_TEMPERATURE, gt=0.0, le=100.0, description="Confidence calibration temperature (1.0 = raw model probability)."),
 ):
     """
     Accepts an uploaded image file and returns deepfake detection results.
@@ -183,7 +219,7 @@ async def detect_image_async(
     request: Request,
     background_tasks: BackgroundTasks, 
     file: UploadFile = File(...),
-    temperature: float = Query(default=1.0, gt=0.0, le=100.0),  
+    temperature: float = Query(default=DEFAULT_TEMPERATURE, gt=0.0, le=100.0, description="Confidence calibration temperature (1.0 = raw model probability)."), 
 ):
     _verify_api_key(request)
     if not file.content_type or not file.content_type.startswith("image/"):
@@ -192,6 +228,12 @@ async def detect_image_async(
     try:
         image_bytes = await _read_image_bytes(file)
         _validate_image_bytes(image_bytes)
+        if task_store.active_count() >= MAX_ACTIVE_TASKS:
+            raise HTTPException(
+                status_code=503,
+                detail="Too many queued detection tasks. Retry shortly.",
+                headers={"Retry-After": "5"},
+            )
         task_id = task_store.create_task()
         background_tasks.add_task(_run_inference_task, task_id, image_bytes, temperature)
         return {"task_id": task_id}
@@ -213,9 +255,24 @@ async def detect_image_async(
 
 
 @app.get("/api/task/{task_id}", response_model=TaskResult)
+@limiter.limit(POLL_RATE_LIMIT)
 async def get_task_status(request: Request, task_id: str):
+    """Poll the status/result of an async detection task (kept 5 min after completion)."""
     _verify_api_key(request)
     task = task_store.get_task(task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found.")
     return task
+
+
+@app.get("/api/health")
+async def health():
+    """Liveness probe plus model status. Returns 200 even if the model is
+    missing so orchestrators can distinguish "up" from "ready"."""
+    return {
+        "status": "ok",
+        "model_loaded": _model_status["loaded"],
+        "model_error": _model_status["error"],
+        "model_version": MODEL_VERSION,
+        "active_tasks": task_store.active_count(),
+    }

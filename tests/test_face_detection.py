@@ -26,8 +26,7 @@ def test_detect_and_crop_face_selects_primary_face_mocked():
     ])
     mock_cascade.empty.return_value = False
 
-    with patch("cv2.CascadeClassifier", return_value=mock_cascade), \
-         patch("os.path.exists", return_value=True):
+    with patch("preprocessing._get_face_cascade", return_value=mock_cascade):
          
         image = np.zeros((200, 200, 3), dtype=np.uint8)
         # Give some dummy color details to differentiate region

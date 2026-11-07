@@ -25,6 +25,20 @@ Raise or lower this value to widen or narrow the uncertain band.
 For sigmoid models (single output) the prediction is used directly.
 For softmax models (2 outputs) the max probability is used."""
 
+DEFAULT_TEMPERATURE: float = 1.4
+"""Default confidence-calibration temperature shared by the Streamlit app,
+FastAPI and CLI so the same image gets the same confidence everywhere.
+1.4 is the value fitted (minimum NLL) on the 10k-image validation split by
+experiments/train_v4.py for the bundled model (see
+deepfake_detection_model.json -> calibration_temperature).  1.0 would
+report the raw, slightly over-confident sigmoid output.  Temperature never
+changes the Real/Fake verdict, only the confidence."""
+
+MODEL_VERSION: str = "v2.0.0"
+"""Model input contract version.  v2 = Haar face crop (full-image fallback)
+-> RGB -> 96x96 float32 in [0, 255]; the model rescales internally.
+Implemented by ``preprocessing.prepare_model_input``."""
+
 MODEL_OUTPUT_ACTIVATION: str = "sigmoid"
 """Activation function of the model's output layer: 'sigmoid' or 'softmax'.
 The evaluation and prediction modules use this to interpret model outputs.

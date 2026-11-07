@@ -21,5 +21,5 @@ def test_load_cached_model_memoization(mock_ensure, mock_load_model_func):
 
     assert model1 is mock_model
     assert model2 is mock_model
-    mock_load_model_func.assert_called_once_with("dummy_path")
+    mock_load_model_func.assert_called_once_with("dummy_path", compile=False)
     mock_ensure.assert_called_once()

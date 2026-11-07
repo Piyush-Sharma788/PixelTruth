@@ -42,8 +42,9 @@ def test_training_plots_use_use_container_width():
     ]
 
     for line in figure_lines:
-        assert "use_container_width=True" in line, (
-            f"Line uses deprecated use_column_width instead of use_container_width:\n{line}"
+        # Streamlit >= 1.46 replaced use_container_width=True with width="stretch".
+        assert 'width="stretch"' in line or "use_container_width=True" in line, (
+            f"Training plot should stretch to the container width:\n{line}"
         )
         assert "use_column_width" not in line, (
             f"Line still contains deprecated use_column_width:\n{line}"

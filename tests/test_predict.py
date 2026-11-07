@@ -32,7 +32,7 @@ def test_predict_image_decodes_sigmoid_output(monkeypatch, score, label, confide
         predict, "load_cached_model", lambda *args, **kwargs: FakeModel([[score]])
     )
 
-    result = predict.predict_image(image_bytes())
+    result = predict.predict_image(image_bytes(), temperature=1.0)
 
     assert result["label"] == label
     assert result["confidence"] == pytest.approx(confidence)
@@ -48,7 +48,7 @@ def test_predict_image_passes_model_override_and_supports_softmax(monkeypatch):
 
     monkeypatch.setattr(predict, "load_cached_model", load_model)
 
-    result = predict.predict_image(image_bytes(), model_path="selected.h5")
+    result = predict.predict_image(image_bytes(), model_path="selected.h5", temperature=1.0)
 
     assert requested_paths == ["selected.h5"]
     assert result["label"] == "Real"
@@ -73,7 +73,7 @@ def test_predict_image_calls_face_detection_for_ndarray_input(monkeypatch):
     )
 
     bgr_image = np.zeros((100, 100, 3), dtype=np.uint8)
-    predict.predict_image(bgr_image)
+    predict.predict_image(bgr_image, temperature=1.0)
 
     assert len(detected_faces) == 1, (
         "predict_image() must call detect_and_crop_face for numpy array input"
@@ -94,7 +94,7 @@ def test_predict_image_falls_back_to_full_image_when_face_detection_fails(monkey
     )
 
     bgr_image = np.zeros((100, 100, 3), dtype=np.uint8)
-    result = predict.predict_image(bgr_image)
+    result = predict.predict_image(bgr_image, temperature=1.0)
 
     assert result["label"] in ("Real", "Fake")
     assert result["face_detected"] is False or result["face_detected"] is None
@@ -142,3 +142,17 @@ def test_cli_json_does_not_attempt_to_serialize_processed_image(
     output = json.loads(capsys.readouterr().out)
     assert output["label"] == "Real"
     assert "processed_image" not in output
+
+
+def test_predict_image_applies_calibrated_default_temperature(monkeypatch):
+    """Without an explicit temperature, the shared fitted default is used."""
+    from calibration import temperature_scale
+    from config import DEFAULT_TEMPERATURE
+
+    monkeypatch.setattr(predict, "load_cached_model", lambda *args, **kwargs: FakeModel([[0.9]]))
+    result = predict.predict_image(image_bytes())
+
+    expected = float(temperature_scale(np.array([[0.9]]), temperature=DEFAULT_TEMPERATURE).reshape(-1)[0])
+    assert result["label"] == "Real"
+    assert result["confidence"] == pytest.approx(expected)
+    assert result["raw"] == pytest.approx([0.9])  # raw model output is never rescaled

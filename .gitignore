@@ -1,17 +1,30 @@
 venv/
+.venv/
 __pycache__/
 *.pyc
+.pytest_cache/
+.env
 
+# Datasets (recreate with scripts/prepare_dataset.py)
+data/
 real_and_fake_face_detection/
 dataset.zip
-*.h5
 
-metrics_cache.json
+# Model weights: only the released, evaluated model is tracked.
+*.h5
+!deepfake_detection_model.h5
+*.tmp
+
+# metrics_cache.json IS tracked: it holds the real evaluation results the
+# analytics dashboard displays for the bundled model.
 
 .github/
 !.github/
 !.github/workflows/
 !.github/workflows/*.yml
+!.github/ISSUE_TEMPLATE/
+!.github/ISSUE_TEMPLATE/*.md
+!.github/PULL_REQUEST_TEMPLATE.md
 
 .DS_Store
-pixeltruth_history.db
+*.db

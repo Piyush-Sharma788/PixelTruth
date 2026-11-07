@@ -1,0 +1,9 @@
+venv/
+.venv/
+data/
+.git/
+__pycache__/
+.pytest_cache/
+*.db
+.env
+.DS_Store

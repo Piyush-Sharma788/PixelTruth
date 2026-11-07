@@ -1,0 +1,85 @@
+{
+  "model_version": "v2.0.0",
+  "file": "deepfake_detection_model.h5",
+  "sha256": "04cc3772cad2491661b72c729bba45cef4da13f5bd41ab0602bd2833035aa2ec",
+  "created_at": "2026-11-07T02:08:49.575236+00:00",
+  "architecture": "MobileNetV2 (ImageNet) + Dense head, sigmoid output = P(Real)",
+  "input_contract": "preprocessing.prepare_model_input: Haar face crop (fallback full image) -> RGB 96x96 float32 [0,255]",
+  "class_index": {
+    "Fake": 0,
+    "Real": 1
+  },
+  "dataset": "140k Real and Fake Faces (FFHQ real vs StyleGAN fake), HF mirror TheKernel01/140k-Real-and-Fake-Faces",
+  "train_images": 50001,
+  "validation_images": 10000,
+  "validation_accuracy": 0.9304,
+  "calibration_temperature": 1.4,
+  "epochs_run": 11,
+  "args": {
+    "data": "data/faces",
+    "out": "deepfake_detection_model.h5",
+    "train_limit": null,
+    "val_limit": null,
+    "frozen_epochs": 3,
+    "finetune_epochs": 8,
+    "unfreeze": 60,
+    "batch_size": 128,
+    "workers": 9,
+    "seed": 42
+  },
+  "history": {
+    "loss": [
+      0.577079176902771,
+      0.49597644805908203,
+      0.4700097441673279,
+      0.4115535020828247,
+      0.2814679741859436,
+      0.22271527349948883,
+      0.1465424746274948,
+      0.11427349597215652,
+      0.10159789025783539,
+      0.09431872516870499,
+      0.08239813894033432
+    ],
+    "val_loss": [
+      0.517675518989563,
+      0.47114962339401245,
+      0.466948002576828,
+      0.443724662065506,
+      0.2722054421901703,
+      0.2956653833389282,
+      0.2901613712310791,
+      0.19965577125549316,
+      0.1967274248600006,
+      0.22023747861385345,
+      0.18151827156543732
+    ],
+    "accuracy": [
+      0.7128057479858398,
+      0.7588248252868652,
+      0.7759245038032532,
+      0.8117237687110901,
+      0.8798624277114868,
+      0.9096418023109436,
+      0.9434611201286316,
+      0.9572808742523193,
+      0.9623207449913025,
+      0.9661206603050232,
+      0.9709005951881409
+    ],
+    "val_accuracy": [
+      0.7457000017166138,
+      0.7778000235557556,
+      0.781000018119812,
+      0.7914000153541565,
+      0.8917999863624573,
+      0.8867999911308289,
+      0.8812000155448914,
+      0.9217000007629395,
+      0.9240999817848206,
+      0.9168999791145325,
+      0.930400013923645
+    ],
+    "phase_boundary": 3
+  }
+}

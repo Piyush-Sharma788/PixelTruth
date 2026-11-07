@@ -2,6 +2,8 @@ import functools
 import numpy as np
 import os
 
+from config import IMAGE_SIZE
+
 from model_utils import (
     ensure_model_file,
     get_model_path,
@@ -50,10 +52,11 @@ def load_cached_model(model_mtime=None, model_path: str | None = None):
 
     from tensorflow.keras.models import load_model
 
-    model = load_model(model_file_path)
+    # compile=False: inference only, and avoids "model was not compiled" noise.
+    model = load_model(model_file_path, compile=False)
 
     # Warm-up inference
-    dummy_input = np.zeros((1, 96, 96, 3), dtype=np.float32)
+    dummy_input = np.zeros((1, IMAGE_SIZE[1], IMAGE_SIZE[0], 3), dtype=np.float32)
 
     model.predict(dummy_input, verbose=0)
 

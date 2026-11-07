@@ -4,11 +4,9 @@ load_dotenv()
 import cv2
 import numpy as np
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timezone
 import streamlit as st
-from preprocessing import (
-    decode_image_bytes,
-)
+from preprocessing import decode_image_bytes
 import logging
 import hashlib
 
@@ -24,7 +22,7 @@ from exceptions import (
     ModelExecutionError,
 )
 
-from predict import preprocess_image, predict_image as _shared_predict_image, decode_prediction
+from predict import predict_image as _shared_predict_image, decode_prediction
 
 from metrics import (
     load_cached_metrics,
@@ -41,7 +39,12 @@ from metrics import (
 )
 
 from utils.model_loader import load_cached_model, get_model_mtime
-from config import LOG_FORMAT, LOW_CONFIDENCE_THRESHOLD as _DEFAULT_CONFIDENCE_THRESHOLD
+from config import (
+    DEFAULT_TEMPERATURE,
+    LOG_FORMAT,
+    LOW_CONFIDENCE_THRESHOLD as _DEFAULT_CONFIDENCE_THRESHOLD,
+    MODEL_VERSION,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -54,6 +57,17 @@ def sanitize_csv_value(value):
     if isinstance(value, str) and value.startswith(('=', '+', '-', '@', '\t', '\r')):
         return "'" + value
     return value
+
+
+def utc_timestamp() -> str:
+    """UTC ISO-8601 timestamp, same format history.save_prediction stores."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+# Persist history to SQLite (default on). For a public, multi-user deployment
+# set PIXELTRUTH_PERSIST_HISTORY=0 so each browser session only sees its own
+# predictions -- the SQLite table is shared by every visitor otherwise.
+PERSIST_HISTORY = os.getenv("PIXELTRUTH_PERSIST_HISTORY", "1").strip().lower() not in ("0", "false", "no")
 
 st.set_page_config(
     page_title="PixelTruth",
@@ -150,11 +164,15 @@ LOW_CONFIDENCE_THRESHOLD = st.sidebar.slider(
 )
 CALIBRATION_TEMPERATURE = st.sidebar.slider(
     "Calibration Temperature (T)",
-    min_value=1.0,
+    min_value=0.5,
     max_value=3.0,
-    value=1.5,
-    step=0.1,
-    help="Higher values soften prediction confidence to correct model overconfidence (1.0 = raw prediction)."
+    value=float(DEFAULT_TEMPERATURE),
+    step=0.05,
+    help=(
+        "Rescales confidence without changing the Real/Fake verdict. "
+        "T > 1 softens, T < 1 sharpens. The default is the value fitted on the "
+        "validation set (see deepfake_detection_model.json)."
+    ),
 )
 
 MAX_HISTORY_ENTRIES = 500
@@ -162,7 +180,8 @@ MAX_HISTORY_ENTRIES = 500
 # ----------------------- DATABASE INIT ----------------------
 
 try:
-    init_db()
+    if PERSIST_HISTORY:
+        init_db()
 except Exception as e:
     logger.warning(f"Could not initialize prediction history database: {e}", exc_info=True)
 
@@ -180,7 +199,12 @@ except Exception as e:
         exc_info=True
     )
 
-    st.error(f"Error loading model: {str(e)}")
+    st.error(
+        f"Error loading model: {e}\n\n"
+        "Make sure `deepfake_detection_model.h5` is in the project root "
+        "(it ships with the repository), or set `PIXELTRUTH_MODEL_PATH` / "
+        "`PIXELTRUTH_MODEL_URL`. See README → Model setup."
+    )
 
     model = None
 
@@ -200,10 +224,12 @@ if "prediction_csv" not in st.session_state:
 # Load persisted history from DB once
 if "history_loaded_from_db" not in st.session_state:
     try:
-        persisted_rows = load_history()
+        persisted_rows = load_history(limit=MAX_HISTORY_ENTRIES) if PERSIST_HISTORY else []
 
         if persisted_rows and not st.session_state.prediction_history:
-            st.session_state.prediction_history = list(persisted_rows)[-MAX_HISTORY_ENTRIES:]
+            # load_history returns newest first; session history is kept
+            # oldest -> newest so new predictions can be appended.
+            st.session_state.prediction_history = list(reversed(persisted_rows))
 
         # Populate prediction_history_hashes with the hashes of loaded history
         for entry in st.session_state.prediction_history:
@@ -226,7 +252,7 @@ def predict_image(image, **kwargs):
 # ----------------------- HEADER / HERO ---------------------
 
 st.markdown(
-    "<h1 class='main-title'>DEEPFAKE SENTINEL</h1>",
+    "<h1 class='main-title'>PIXELTRUTH</h1>",
     unsafe_allow_html=True
 )
 
@@ -238,7 +264,7 @@ st.markdown(
 if os.path.exists("coverpage.png"):
     st.image(
         "coverpage.png",
-        use_container_width=True
+        width="stretch"
     )
 
 # ----------------------- TOP INFO SECTION ------------------
@@ -265,8 +291,16 @@ with col_info_right:
 
     st.subheader("📈 Model Snapshot")
 
-    st.metric("Training Accuracy", "95%")
-    st.metric("Input Size", "96 × 96 pixels")
+    _snapshot_metrics = load_cached_metrics()
+    if _snapshot_metrics:
+        st.metric(
+            "Test Accuracy",
+            f"{_snapshot_metrics['accuracy']:.1f}%",
+            help=f"Measured by evaluate.py on {_snapshot_metrics.get('total_images', '?'):,} held-out test images.",
+        )
+    else:
+        st.metric("Test Accuracy", "Not evaluated", help="Run evaluate.py to measure it.")
+    st.metric("Input Size", "96 × 96 pixels (face crop)")
     st.metric("Task", "Binary classification (Real / Fake)")
 
     st.markdown("</div>", unsafe_allow_html=True)
@@ -283,13 +317,13 @@ col_plot1, col_plot2 = st.columns(2)
 
 with col_plot1:
     if os.path.exists("Figure_1.png"):
-        st.image("Figure_1.png", use_container_width=True, caption="Training History")
+        st.image("Figure_1.png", width="stretch", caption="Training history: loss")
     else:
         st.warning("Missing image: Figure_1.png")
 
 with col_plot2:
     if os.path.exists("Figure_2.png"):
-        st.image("Figure_2.png", use_container_width=True, caption="Evaluation Metrics")
+        st.image("Figure_2.png", width="stretch", caption="Training history: accuracy")
     else:
         st.warning("Missing image: Figure_2.png")
 
@@ -353,23 +387,16 @@ if analysis_mode == "Batch Analysis":
             MAX_FILE_SIZE_MB = 10
             MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 
-            uploaded_hashes = set()
-            file_bytes_map = {}
             if "current_predictions" not in st.session_state:
                 st.session_state.current_predictions = {}
 
             batch_results = []
             batch_errors = []
 
-            # Guard: initialise accumulators used across both loops below
-            uploaded_hashes: set = set()
-            file_bytes_map: dict = {}
-
-            # Guard: initialise current_predictions if not already in session state
-            if "current_predictions" not in st.session_state:
-                st.session_state.current_predictions = {}
-
-            for idx, uploaded_file in enumerate(uploaded_files):
+            # One entry per upload, keyed by content hash (not filename), so two
+            # different files that share a name never overwrite each other.
+            upload_entries = []  # (uploaded_file, raw_bytes, sha256)
+            for uploaded_file in uploaded_files:
                 if uploaded_file.size > MAX_FILE_SIZE_BYTES:
                     batch_errors.append((
                         uploaded_file.name,
@@ -379,62 +406,47 @@ if analysis_mode == "Batch Analysis":
                     continue
 
                 try:
-                    raw_bytes = uploaded_file.read()
-                    uploaded_file.seek(0)
-                    file_hash = hashlib.sha256(raw_bytes).hexdigest()
-                    uploaded_hashes.add(file_hash)
-                    file_bytes_map[uploaded_file.name] = (raw_bytes, file_hash)
+                    raw_bytes = uploaded_file.getvalue()
+                    upload_entries.append(
+                        (uploaded_file, raw_bytes, hashlib.sha256(raw_bytes).hexdigest())
+                    )
                 except Exception as e:
                     batch_errors.append((uploaded_file.name, f"Could not read file: {e}"))
-                    continue
 
-            # Prune st.session_state.current_predictions to remove files that are no longer uploaded
+            uploaded_hashes = {h for _, _, h in upload_entries}
+
+            # Drop cached results for files that are no longer uploaded
             st.session_state.current_predictions = {
                 h: res for h, res in st.session_state.current_predictions.items() if h in uploaded_hashes
             }
 
-            # Determine which files need processing
-            files_to_process = [
-                name for name in file_bytes_map
-                if file_bytes_map[name][1] not in st.session_state.current_predictions
-            ]
+            hashes_to_process = []
+            for _, _, h in upload_entries:
+                if h not in st.session_state.current_predictions and h not in hashes_to_process:
+                    hashes_to_process.append(h)
 
             progress_bar = None
-            if files_to_process:
+            if hashes_to_process:
                 progress_bar = st.progress(0, text="Analysing images…")
 
-            for idx, uploaded_file in enumerate(uploaded_files):
-                if uploaded_file.name not in file_bytes_map:
-                    continue
-
-                raw_bytes, entry_hash = file_bytes_map[uploaded_file.name]
-
-                # Check if already processed
+            for uploaded_file, raw_bytes, entry_hash in upload_entries:
+                # Already analysed: only re-apply the (possibly changed) temperature.
                 if entry_hash in st.session_state.current_predictions:
-                    cached_res = st.session_state.current_predictions[entry_hash]
-                    
-                    # Dynamically apply temperature scaling to raw_prediction
-                    from calibration import temperature_scale
-                    from predict import decode_prediction
-                    
+                    cached_res = dict(st.session_state.current_predictions[entry_hash])
                     calibrated_pred = temperature_scale(cached_res["raw_prediction"], temperature=CALIBRATION_TEMPERATURE)
-                    label, confidence, raw_scores = decode_prediction(calibrated_pred)
-                    
-                    # Update dynamic fields
+                    label, confidence, _ = decode_prediction(calibrated_pred)
+                    cached_res["filename"] = uploaded_file.name
                     cached_res["label"] = label
                     cached_res["confidence"] = confidence
-                    cached_res["raw"] = raw_scores
                     cached_res["is_uncertain"] = confidence < LOW_CONFIDENCE_THRESHOLD
-                    
                     batch_results.append(cached_res)
                     continue
 
-                # Update progress bar if processing
                 if progress_bar is not None:
-                    process_idx = files_to_process.index(uploaded_file.name)
+                    process_idx = hashes_to_process.index(entry_hash)
                     progress_bar.progress(
-                        (process_idx + 1) / len(files_to_process),
-                        text=f"Analysing {uploaded_file.name} ({process_idx + 1}/{len(files_to_process)})…"
+                        (process_idx + 1) / len(hashes_to_process),
+                        text=f"Analysing {uploaded_file.name} ({process_idx + 1}/{len(hashes_to_process)})…"
                     )
 
                 try:
@@ -468,8 +480,6 @@ if analysis_mode == "Batch Analysis":
                     if face_box is not None:
                         face_detected = True
                         x, y, w, h = face_box
-
-                        import cv2
                         cv2.rectangle(
                             box_image,
                             (x, y),
@@ -555,27 +565,33 @@ if analysis_mode == "Batch Analysis":
                 batch_results.append(prediction_result)
                 st.session_state.current_predictions[entry_hash] = prediction_result
 
-                entry_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
                 if entry_hash not in st.session_state.prediction_history_hashes:
+                    # Same columns/format as history.load_history so session
+                    # and persisted rows look identical. CSV escaping is
+                    # applied at export time, not here.
                     history_entry = {
-                        "Filename": sanitize_csv_value(uploaded_file.name),
-                        "Result": sanitize_csv_value(label),
+                        "Filename": uploaded_file.name,
+                        "Result": label,
                         "Confidence (%)": f"{confidence * 100:.1f}",
-                        "Timestamp": entry_timestamp,
+                        "Timestamp": utc_timestamp(),
+                        "Face Detected": bool(face_detected),
                         "_hash": entry_hash,
                     }
 
                     st.session_state.prediction_history.append(history_entry)
                     st.session_state.prediction_history_hashes.add(entry_hash)
 
-                    save_prediction(
-                        filename=uploaded_file.name,
-                        verdict=label,
-                        confidence_pct=round(confidence * 100, 1),
-                        face_detected=int(face_detected),
-                        image_hash=entry_hash,
-                    )
+                    if PERSIST_HISTORY:
+                        try:
+                            save_prediction(
+                                filename=uploaded_file.name,
+                                verdict=label,
+                                confidence_pct=round(confidence * 100, 1),
+                                face_detected=int(face_detected),
+                                image_hash=entry_hash,
+                            )
+                        except Exception as e:
+                            logger.warning(f"Could not save prediction history: {e}", exc_info=True)
 
                     while len(st.session_state.prediction_history) > MAX_HISTORY_ENTRIES:
                         old = st.session_state.prediction_history.pop(0)
@@ -629,7 +645,7 @@ if analysis_mode == "Batch Analysis":
                                 res["box_image"],
                                 channels="BGR",
                                 caption="Uploaded image (face detected)",
-                                use_container_width=True,
+                                width="stretch",
                             )
 
                             st.markdown(
@@ -644,7 +660,7 @@ if analysis_mode == "Batch Analysis":
                                     res["face_image"],
                                     channels="BGR",
                                     caption="Detected face region",
-                                    use_container_width=True,
+                                    width="stretch",
                                 )
 
                             with crop_col2:
@@ -653,7 +669,7 @@ if analysis_mode == "Batch Analysis":
                                         res["gradcam"],
                                         channels="BGR",
                                         caption="Grad-CAM face details",
-                                        use_container_width=True,
+                                        width="stretch",
                                     )
 
                         else:
@@ -661,7 +677,7 @@ if analysis_mode == "Batch Analysis":
                                 res["bgr_image"],
                                 channels="BGR",
                                 caption="Uploaded image (no face detected, full image analyzed)",
-                                use_container_width=True,
+                                width="stretch",
                             )
 
                             if res["gradcam"] is not None:
@@ -669,7 +685,7 @@ if analysis_mode == "Batch Analysis":
                                     res["gradcam"],
                                     channels="BGR",
                                     caption="Grad-CAM attention map (full image)",
-                                    use_container_width=True,
+                                    width="stretch",
                                 )
 
                         # Forensic Tabs: ELA vs Luminance Gradient
@@ -690,7 +706,7 @@ if analysis_mode == "Batch Analysis":
                                         res["ela_image"],
                                         channels="BGR",
                                         caption="ELA map",
-                                        use_container_width=True
+                                        width="stretch"
                                     )
                                 with ela_col2:
                                     score = res["ela_score"]
@@ -720,7 +736,7 @@ if analysis_mode == "Batch Analysis":
                                         res["gradient_image"],
                                         channels="BGR",
                                         caption="Luminance Gradient Map",
-                                        use_container_width=True
+                                        width="stretch"
                                     )
                                 with grad_col2:
                                     st.markdown("**Sobel Gradient Intensity Analysis**")
@@ -740,7 +756,7 @@ if analysis_mode == "Batch Analysis":
                                         res["noise_residual_image"],
                                         channels="BGR",
                                         caption="Noise Residual Map",
-                                        use_container_width=True
+                                        width="stretch"
                                     )
                                 with noise_col2:
                                     st.markdown("**High-Frequency Noise Residual Map**")
@@ -811,342 +827,171 @@ if analysis_mode == "Batch Analysis":
 elif analysis_mode == "Forensic Comparison":
 
     def run_forensic_analysis(uploaded_file):
-        raw_bytes = uploaded_file.read()
+        """Analyse one image for the comparison view.
 
-        prediction = predict_image(raw_bytes)
+        Returns (result_dict, None) on success or (None, error_message).
+        Results are cached per content hash so reruns are instant.
+        """
+        raw_bytes = uploaded_file.getvalue()
+        file_hash = hashlib.sha256(raw_bytes).hexdigest()
+        cache = st.session_state.setdefault("comparison_cache", {})
 
-        exif_data = extract_exif(raw_bytes)
+        if file_hash not in cache:
+            try:
+                prediction = predict_image(raw_bytes, temperature=1.0)
+            except (PreprocessingError, ValueError) as e:
+                return None, f"Could not read this image: {e}"
+            except Exception as e:
+                logger.error(f"Comparison prediction failed: {e}", exc_info=True)
+                return None, "Model inference failed for this image."
 
-        ela_image = None
-        ela_score = None
+            face_image = prediction.get("face_image")
+            gradcam_image = None
+            try:
+                backbone_model = get_backbone_submodel(model)
+                last_conv_layer = find_last_conv_layer(backbone_model)
+                heatmap = make_gradcam_heatmap(prediction["processed_image"], model, last_conv_layer)
+                # The heatmap was computed on the analysed (face) region, so
+                # overlay it on that same region.
+                gradcam_image = overlay_heatmap(np.ascontiguousarray(face_image), heatmap)
+            except Exception as e:
+                logger.warning(f"Grad-CAM failed for {uploaded_file.name}: {e}")
 
-        try:
             ela_image = compute_ela(raw_bytes)
+            cache[file_hash] = {
+                "raw_prediction": prediction["raw_prediction"],
+                "face_detected": prediction["face_detected"],
+                "exif": extract_exif(raw_bytes),
+                "ela_image": ela_image,
+                "ela_score": ela_uniformity_score(ela_image) if ela_image is not None else None,
+                "gradcam": gradcam_image,
+                "gradient_image": compute_luminance_gradient(raw_bytes),
+                "noise_residual_image": compute_noise_residual(raw_bytes),
+            }
+            # Keep only the two most recent comparisons in memory.
+            while len(cache) > 2:
+                cache.pop(next(iter(cache)))
 
-            if ela_image is not None:
-                ela_score = ela_uniformity_score(ela_image)
+        result = dict(cache[file_hash])
+        label, confidence, _ = decode_prediction(
+            temperature_scale(result["raw_prediction"], temperature=CALIBRATION_TEMPERATURE)
+        )
+        result.update(
+            filename=uploaded_file.name,
+            label=label,
+            confidence=confidence,
+            is_uncertain=confidence < LOW_CONFIDENCE_THRESHOLD,
+        )
+        return result, None
 
-        except Exception:
-            pass
+    def render_comparison_column(title, uploaded_file, res):
+        st.markdown(f"### 🖼 {title}")
+        st.image(uploaded_file, width="stretch")
+        verdict = res["label"] + (" (uncertain)" if res["is_uncertain"] else "")
+        st.metric("Prediction", verdict)
+        st.metric("Confidence", f"{res['confidence'] * 100:.1f}%")
+        st.caption("Face detected and analysed" if res["face_detected"] else "No face detected; full image analysed")
 
-        gradient_image = None
-        try:
-            gradient_image = compute_luminance_gradient(raw_bytes)
-        except Exception:
-            pass
+        if res["gradcam"] is not None:
+            st.markdown("#### Grad-CAM")
+            st.image(res["gradcam"], channels="BGR", width="stretch")
+        if res["ela_image"] is not None:
+            st.image(res["ela_image"], channels="BGR", caption="ELA Analysis", width="stretch")
+            if res["ela_score"] is not None:
+                st.caption(f"ELA uniformity score: {res['ela_score']:.2f} (0 = natural, 1 = AI-like)")
+        if res.get("gradient_image") is not None:
+            st.image(res["gradient_image"], channels="BGR", caption="Luminance Gradient Map", width="stretch")
+        if res.get("noise_residual_image") is not None:
+            st.image(res["noise_residual_image"], channels="BGR", caption="Noise Residual Map", width="stretch")
 
-        noise_residual_image = None
-        try:
-            noise_residual_image = compute_noise_residual(raw_bytes)
-        except Exception:
-            pass
-
-        gradcam_image = None
-
-        try:
-            bgr_image = decode_image_bytes(raw_bytes)
-
-            backbone_model = get_backbone_submodel(model)
-            last_conv_layer = find_last_conv_layer(backbone_model)
-
-            heatmap = make_gradcam_heatmap(
-                prediction["processed_image"],
-                model,
-                last_conv_layer
-            )
-
-            gradcam_image = overlay_heatmap(
-                bgr_image,
-                heatmap
-            )
-
-        except Exception:
-            pass
-
-        return {
-            "filename": uploaded_file.name,
-            "label": prediction["label"],
-            "confidence": prediction["confidence"],
-            "processed_image": prediction["processed_image"],
-            "exif": exif_data,
-            "ela_image": ela_image,
-            "ela_score": ela_score,
-            "gradcam": gradcam_image,
-            "gradient_image": gradient_image,
-            "noise_residual_image": noise_residual_image,
-        }
+        st.markdown("#### Metadata")
+        st.write(res["exif"]["suspicion_reason"])
 
     st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
-
     st.subheader("🆚 Forensic Image Comparison")
 
     col1, col2 = st.columns(2)
-
     with col1:
-        image_a = st.file_uploader(
-            "Upload Image A",
-            type=["jpg", "jpeg", "png", "webp"],
-            key="compare_a"
-        )
-
+        image_a = st.file_uploader("Upload Image A", type=["jpg", "jpeg", "png", "webp"], key="compare_a")
     with col2:
-        image_b = st.file_uploader(
-            "Upload Image B",
-            type=["jpg", "jpeg", "png", "webp"],
-            key="compare_b"
-        )
+        image_b = st.file_uploader("Upload Image B", type=["jpg", "jpeg", "png", "webp"], key="compare_b")
 
-    if image_a and image_b:
+    if model is None and (image_a or image_b):
+        st.error("Model could not be loaded. Detection is unavailable.")
 
-        result_a = run_forensic_analysis(image_a)
-        image_a.seek(0)
+    elif image_a and image_b:
+        result_a, error_a = run_forensic_analysis(image_a)
+        result_b, error_b = run_forensic_analysis(image_b)
 
-        result_b = run_forensic_analysis(image_b)
-        image_b.seek(0)
+        if error_a or error_b:
+            if error_a:
+                st.error(f"**Image A ({image_a.name})** — {error_a}")
+            if error_b:
+                st.error(f"**Image B ({image_b.name})** — {error_b}")
+        else:
+            st.markdown("---")
+            left, right = st.columns(2)
+            with left:
+                render_comparison_column("Image A", image_a, result_a)
+            with right:
+                render_comparison_column("Image B", image_b, result_b)
 
-        st.markdown("---")
+            st.markdown("---")
+            st.subheader("📊 Comparison Insights")
 
-        left, right = st.columns(2) 
-        with left:
+            confidence_diff = abs(result_a["confidence"] - result_b["confidence"])
+            st.metric("Confidence Difference", f"{confidence_diff * 100:.1f}%")
 
-            st.markdown("### 🖼 Image A")
+            if result_a["label"] != result_b["label"]:
+                st.warning("Classification mismatch detected.")
+            else:
+                st.success("Both images received the same classification.")
 
-            st.image(image_a, use_container_width=True)
+            stronger = result_a if result_a["confidence"] >= result_b["confidence"] else result_b
+            st.info(f"{stronger['filename']} has the stronger prediction confidence.")
 
-            st.metric(
-                "Prediction",
-                result_a["label"]
-            )
-
-            st.metric(
-                "Confidence",
-                f"{result_a['confidence']*100:.1f}%"
-            )
-            if result_a["gradcam"] is not None:
-
-                st.markdown("#### Grad-CAM")
-
-                st.image(
-                    result_a["gradcam"],
-                    channels="BGR",
-                    use_container_width=True
-                )  
-
-            if result_a["ela_image"] is not None:
-                st.image(
-                    result_a["ela_image"],
-                    caption="ELA Analysis",
-                    use_container_width=True
-                )
-
-            if result_a.get("gradient_image") is not None:
-                st.image(
-                    result_a["gradient_image"],
-                    caption="Luminance Gradient Map",
-                    use_container_width=True
-                )
-
-            if result_a.get("noise_residual_image") is not None:
-                st.image(
-                    result_a["noise_residual_image"],
-                    caption="Noise Residual Map",
-                    use_container_width=True
-                )
-
+            # ------------------ EXIF COMPARISON ----------------
+            st.markdown("### 🧾 Metadata Comparison")
             exif_a = result_a["exif"]
-
-            st.markdown("#### Metadata")
-
-            st.write(
-                exif_a["suspicion_reason"]
-            )
-
-        with right:
-
-            st.markdown("### 🖼 Image B")
-
-            st.image(image_b, use_container_width=True)
-
-            st.metric(
-                "Prediction",
-                result_b["label"]
-            )
-
-            st.metric(
-                "Confidence",
-                f"{result_b['confidence']*100:.1f}%"
-            )
-            if result_b["gradcam"] is not None:
-
-                st.markdown("#### Grad-CAM")
-
-                st.image(
-                    result_b["gradcam"],
-                    channels="BGR",
-                    use_container_width=True
-                )    
-
-            if result_b["ela_image"] is not None:
-                st.image(
-                    result_b["ela_image"],
-                    caption="ELA Analysis",
-                    use_container_width=True
-                )
-
-            if result_b.get("gradient_image") is not None:
-                st.image(
-                    result_b["gradient_image"],
-                    caption="Luminance Gradient Map",
-                    use_container_width=True
-                )
-
-            if result_b.get("noise_residual_image") is not None:
-                st.image(
-                    result_b["noise_residual_image"],
-                    caption="Noise Residual Map",
-                    use_container_width=True
-                )
-
             exif_b = result_b["exif"]
+            fields = [
+                ("Has EXIF", "has_exif"),
+                ("EXIF Field Count", "field_count"),
+                ("Software", "software"),
+                ("Camera Make", "make"),
+                ("Camera Model", "model"),
+                ("Capture Date", "datetime"),
+                ("GPS Present", "gps_present"),
+                ("AI Software Detected", "ai_software_detected"),
+                ("Suspicious", "suspicious"),
+            ]
+            comparison_rows = [
+                {
+                    "Field": label_text,
+                    # str() keeps the column type uniform for st.dataframe
+                    "Image A": str(exif_a.get(key)) if exif_a.get(key) is not None else "N/A",
+                    "Image B": str(exif_b.get(key)) if exif_b.get(key) is not None else "N/A",
+                }
+                for label_text, key in fields
+            ]
+            st.dataframe(pd.DataFrame(comparison_rows), width="stretch")
 
-            st.markdown("#### Metadata")
+            differences = [row["Field"] for row in comparison_rows if row["Image A"] != row["Image B"]]
+            if differences:
+                st.warning("⚠ Metadata differences detected in: " + ", ".join(differences))
+            else:
+                st.success("✅ No metadata differences detected.")
 
-            st.write(
-                exif_b["suspicion_reason"]
-            ) 
-        st.markdown("---")
-
-        st.subheader("📊 Comparison Insights")
-        st.markdown("### 🧾 Metadata Comparison")
-
-        confidence_diff = abs(
-            result_a["confidence"] -
-            result_b["confidence"]
-        )
-
-        st.metric(
-            "Confidence Difference",
-            f"{confidence_diff*100:.1f}%"
-        )
-
-        if result_a["label"] != result_b["label"]:
-            st.warning(
-                "Classification mismatch detected."
-            )
-        else:
-            st.success(
-                "Both images received the same classification."
-            )
-
-        if result_a["confidence"] > result_b["confidence"]:
-            st.info(
-                f"🟥 {result_a['filename']} has the stronger prediction confidence."
-            )
-        else:
-            st.info(
-                f"🟥 {result_b['filename']} has the stronger prediction confidence."
-            )
-# ------------------ EXIF COMPARISON ----------------
-
-        exif_a = result_a["exif"]
-        exif_b = result_b["exif"]
-
-        comparison_rows = [
-            {
-                "Field": "Has EXIF",
-                "Image A": exif_a.get("has_exif", "N/A"),
-                "Image B": exif_b.get("has_exif", "N/A"),
-            },
-            {
-                "Field": "EXIF Field Count",
-                "Image A": exif_a.get("field_count", "N/A"),
-                "Image B": exif_b.get("field_count", "N/A"),
-            },
-            {
-                "Field": "Software",
-                "Image A": exif_a.get("software", "N/A"),
-                "Image B": exif_b.get("software", "N/A"),
-            },
-            {
-                "Field": "Camera Make",
-                "Image A": exif_a.get("make", "N/A"),
-                "Image B": exif_b.get("make", "N/A"),
-            },
-            {
-                "Field": "Camera Model",
-                "Image A": exif_a.get("model", "N/A"),
-                "Image B": exif_b.get("model", "N/A"),
-            },
-            {
-                "Field": "Capture Date",
-                "Image A": exif_a.get("datetime", "N/A"),
-                "Image B": exif_b.get("datetime", "N/A"),
-            },
-            {
-                "Field": "GPS Present",
-                "Image A": exif_a.get("gps_present", "N/A"),
-                "Image B": exif_b.get("gps_present", "N/A"),
-            },
-            {
-                "Field": "AI Software Detected",
-                "Image A": exif_a.get("ai_software_detected", "N/A"),
-                "Image B": exif_b.get("ai_software_detected", "N/A"),
-            },
-            {
-                "Field": "Suspicious",
-                "Image A": exif_a.get("suspicious", "N/A"),
-                "Image B": exif_b.get("suspicious", "N/A"),
-            },
-        ]
-
-        comparison_df = pd.DataFrame(comparison_rows)
-
-        st.dataframe(
-            comparison_df,
-            use_container_width=True
-        )
-
-        differences = []
-
-        for row in comparison_rows:
-
-            if str(row["Image A"]) != str(row["Image B"]):
-                differences.append(row["Field"])
-
-        if differences:
-
-            st.warning(
-                "⚠ Metadata differences detected in: "
-                + ", ".join(differences)
-            )
-
-        else:
-
-            st.success(
-                "✅ No metadata differences detected."
-            )
-#------------------------ METADATA VERDICT ----------------
-
+            # ------------------ METADATA VERDICT ----------------
             st.markdown("### 🚨 Metadata Verdict")
+            for name, exif in (("Image A", exif_a), ("Image B", exif_b)):
+                message = f"{name}: {exif.get('suspicion_reason', 'N/A')}"
+                if exif.get("suspicious", False):
+                    st.warning(message)
+                else:
+                    st.success(message)
 
-            if exif_a.get("suspicious", False):
-                st.warning(
-                    f"Image A: {exif_a.get('suspicion_reason', 'N/A')}"
-                )
-            else:
-                st.success(
-                    f"Image A: {exif_a.get('suspicion_reason', 'N/A')}"
-                )
-
-            if exif_b.get("suspicious", False):
-                st.warning(
-                    f"Image B: {exif_b.get('suspicion_reason', 'N/A')}"
-                )
-            else:
-                st.success(
-                    f"Image B: {exif_b.get('suspicion_reason', 'N/A')}"
-                )
-                
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 # ----------------------- PREDICTION HISTORY / CSV EXPORT --
@@ -1156,25 +1001,35 @@ if st.session_state.get("prediction_history"):
     st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
     st.subheader("🗂 Prediction History")
 
-    preview = st.session_state.prediction_history[-50:]
+    def history_dataframe(rows):
+        """Newest-first DataFrame without internal columns."""
+        df = pd.DataFrame(list(reversed(rows)))
+        return df.drop(columns=["_hash"], errors="ignore")
 
-    if preview:
-        preview_df = pd.DataFrame(preview)
-        st.dataframe(preview_df, use_container_width=True)
+    if PERSIST_HISTORY:
+        st.caption("History is saved to the local SQLite database (PIXELTRUTH_DB_PATH).")
     else:
-        st.write("No recent history to preview.")
+        st.caption("History is kept for this browser session only (PIXELTRUTH_PERSIST_HISTORY=0).")
+
+    st.dataframe(history_dataframe(st.session_state.prediction_history[-50:]), width="stretch")
 
     c1, c2 = st.columns([1, 1])
 
     with c1:
         if st.button("⬇️ Prepare CSV Report"):
-            full_df = pd.DataFrame(st.session_state.prediction_history)
+            # Escape every text cell (session rows *and* rows loaded from the
+            # database) to block spreadsheet formula injection.
+            full_df = history_dataframe(st.session_state.prediction_history).map(sanitize_csv_value)
             st.session_state.prediction_csv = full_df.to_csv(index=False).encode("utf-8")
             st.success("Report prepared — click Download to save the CSV.")
 
     with c2:
         if st.button("🧹 Clear History"):
-            clear_history()
+            if PERSIST_HISTORY:
+                try:
+                    clear_history()
+                except Exception as e:
+                    logger.warning(f"Could not clear history database: {e}", exc_info=True)
             st.session_state.prediction_history = []
             st.session_state.prediction_history_hashes = set()
             st.session_state.prediction_csv = None
@@ -1184,7 +1039,7 @@ if st.session_state.get("prediction_history"):
         st.download_button(
             label="⬇️ Download Report as CSV",
             data=st.session_state.prediction_csv,
-            file_name=f"pixeltruth_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+            file_name=f"pixeltruth_report_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.csv",
             mime="text/csv",
         )
 
@@ -1198,7 +1053,7 @@ st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
 st.markdown("### 📊 Model Analytics Dashboard")
 st.caption("Comprehensive performance metrics and visualizations of the deepfake detection model")
 
-cached_metrics = load_cached_metrics()
+cached_metrics = _snapshot_metrics
 
 if cached_metrics is None:
     st.warning(
@@ -1235,6 +1090,11 @@ else:
 
     if metrics:
         st.markdown("#### 📈 Performance Metrics")
+        st.caption(
+            "Measured on a held-out test set through the same face-crop pipeline the app uses. "
+            "Precision, recall and F1 are support-weighted averages over the Real and Fake classes"
+            + (f"; ROC AUC = {cached_metrics['auc']:.4f}." if "auc" in cached_metrics else ".")
+        )
 
         col_acc, col_prec, col_rec, col_f1 = st.columns(4)
 
@@ -1279,7 +1139,7 @@ else:
         if cm_fig:
             st.plotly_chart(
                 cm_fig,
-                use_container_width=True,
+                width="stretch",
                 config={'scrollZoom': True, 'displayModeBar': True}
             )
 
@@ -1291,7 +1151,7 @@ else:
         if roc_fig:
             st.plotly_chart(
                 roc_fig,
-                use_container_width=True,
+                width="stretch",
                 config={'scrollZoom': True, 'displayModeBar': True}
             )
 
@@ -1310,7 +1170,7 @@ else:
         if dist_fig:
             st.plotly_chart(
                 dist_fig,
-                use_container_width=True,
+                width="stretch",
                 config={'scrollZoom': True, 'displayModeBar': True}
             )
 

@@ -122,8 +122,9 @@ def get_confusion_matrix_plot(cached_metrics: Optional[dict] = None) -> Optional
     fig = px.imshow(
         cm,
         labels=dict(x="Predicted Label", y="True Label", color="Count"),
-        x=['Real', 'Fake'],
-        y=['Real', 'Fake'],
+        # evaluate.py stores the matrix with index 0 = Fake, 1 = Real.
+        x=['Fake', 'Real'],
+        y=['Fake', 'Real'],
         color_continuous_scale='RdYlGn',
         text_auto=True
     )
@@ -188,7 +189,7 @@ def get_roc_curve_plot(cached_metrics: Optional[dict] = None) -> Optional[go.Fig
         logger.warning("ROC data is empty in metrics cache")
         return None
 
-    roc_auc = float(np.trapz(tpr, fpr))
+    roc_auc = float(cached_metrics.get("auc", np.trapz(tpr, fpr)))
 
     fig = go.Figure()
 

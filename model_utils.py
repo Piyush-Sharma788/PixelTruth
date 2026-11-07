@@ -7,10 +7,7 @@ from urllib.error import HTTPError, URLError
 
 from exceptions import ModelDownloadError
 
-DEFAULT_MODEL_PATH = "deepfake_detection_model.h5"
-MODEL_PATH_ENV = "PIXELTRUTH_MODEL_PATH"
-MODEL_URL_ENV = "PIXELTRUTH_MODEL_URL"
-MODEL_SHA256_ENV = "PIXELTRUTH_MODEL_SHA256"
+from config import DEFAULT_MODEL_PATH, MODEL_PATH_ENV, MODEL_SHA256_ENV, MODEL_URL_ENV  # noqa: F401
 
 
 def get_model_path() -> str:
@@ -50,6 +47,8 @@ DOWNLOAD_TIMEOUT = 60
 def download_model_file(url: str, destination_path: str) -> str:
     if not url:
         raise ValueError("A model download URL was not provided.")
+    if not url.lower().startswith("https://"):
+        raise ModelDownloadError("Model URL must use https://")
 
     destination = Path(destination_path)
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -61,40 +60,19 @@ def download_model_file(url: str, destination_path: str) -> str:
         ) as output_file:
             shutil.copyfileobj(response, output_file)
     except HTTPError as e:
+        temp_path.unlink(missing_ok=True)
         raise ModelDownloadError(
             f"Failed to download model: HTTP {e.code} {e.reason}"
         ) from e
-    except URLError as e:
+    except (URLError, OSError) as e:  # OSError covers socket timeouts mid-read
+        temp_path.unlink(missing_ok=True)
         raise ModelDownloadError(
-            f"Failed to download model: {e.reason}"
+            f"Failed to download model: {getattr(e, 'reason', e)}"
         ) from e
 
     temp_path.replace(destination)
     return str(destination)
 
-
-
-def _verify_sha256(file_path: str, expected: str) -> None:
-    """Verify a downloaded file matches the expected SHA-256 digest.
-
-    Raises ModelDownloadError and deletes the file if the digest does not match.
-    CWE-494/345 fix: ensure model integrity against supply-chain attacks.
-    """
-    import hashlib
-    sha256 = hashlib.sha256()
-    with open(file_path, "rb") as fh:
-        for chunk in iter(lambda: fh.read(65536), b""):
-            sha256.update(chunk)
-    actual = sha256.hexdigest()
-    if actual.lower() != expected.lower():
-        import os as _os
-        _os.remove(file_path)
-        raise ModelDownloadError(
-            f"SHA-256 mismatch for downloaded model.\n"
-            f"  expected : {expected!r}\n"
-            f"  actual   : {actual!r}\n"
-            "File deleted — possible supply-chain attack or corrupted download."
-        )
 
 def ensure_model_file(
     model_path: str | None = None,
@@ -114,7 +92,12 @@ def ensure_model_file(
     if download_if_missing and resolved_model_url:
         downloaded_path = download_model_file(resolved_model_url, resolved_model_path)
         if resolved_model_sha256:
-            verify_sha256(downloaded_path, resolved_model_sha256)
+            try:
+                verify_sha256(downloaded_path, resolved_model_sha256)
+            except ValueError as exc:
+                # Never leave an unverified download where the app would load it.
+                os.remove(downloaded_path)
+                raise ModelDownloadError(f"{exc} The downloaded file was deleted.") from exc
         return downloaded_path
 
     raise FileNotFoundError(

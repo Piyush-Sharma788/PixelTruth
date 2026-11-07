@@ -1,0 +1,7 @@
+[server]
+# Matches the 10 MB per-file limit enforced in app.py and the API.
+maxUploadSize = 10
+headless = true
+
+[browser]
+gatherUsageStats = false

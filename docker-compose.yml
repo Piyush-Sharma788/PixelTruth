@@ -1,0 +1,18 @@
+services:
+  ui:
+    build: .
+    ports: ["8501:8501"]
+    environment:
+      PIXELTRUTH_PERSIST_HISTORY: "0"   # public deployments: per-session history
+    volumes: ["pixeltruth-data:/data"]
+  api:
+    build: .
+    command: ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports: ["8000:8000"]
+    environment:
+      PIXELTRUTH_API_KEY: ${PIXELTRUTH_API_KEY:-}
+      PIXELTRUTH_CORS_ORIGINS: ${PIXELTRUTH_CORS_ORIGINS:-http://localhost:8501}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health', timeout=4)"]
+volumes:
+  pixeltruth-data:
